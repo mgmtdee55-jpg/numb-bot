@@ -1,4 +1,4 @@
-# VoiceMaster
+# Numb Bot
 
 Existing Discord.js bot for temporary voice channels and VoiceMaster controls.
 
@@ -22,3 +22,7 @@ VC control cooldowns are per user, channel, and action, with their durations cen
 The wizard only uses channels and categories selected by the owner. Reconfiguration is explicit; cancelling or letting a wizard expire does not change the saved configuration.
 
 Members need **View Channel** and **Connect** to use the selected Join to Create and temporary voice channels, and **Speak** to talk. These are member permissions, not permissions the bot needs to join voice. Keep the bot's text permissions available in the temporary voice-channel chat so it can post and recover the interface.
+
+## Railway
+
+Connect this repo in Railway. The start command is `npm start`. Set `DISCORD_TOKEN` in the service variables. `DB_PATH` defaults to `./data/vc.sqlite`. Attach a volume mounted at `/app/data` if the database should survive redeploys.

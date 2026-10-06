@@ -1,7 +1,7 @@
 {
-  "name": "vc-bleed-style-bot",
+  "name": "numb-bot",
   "version": "1.0.0",
-  "description": "Bleed-style temporary voice management bot",
+  "description": "Numb Bot — Discord voice, vouch, and staff bot",
   "main": "index.js",
   "engines": {
     "node": ">=20"
