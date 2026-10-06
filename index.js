@@ -25,7 +25,7 @@ const { startTempbanScheduler, enforceHardban, enforceForeverban, restoreForever
 const vouch = require("./vouch");
 const systems = require("./systems");
 const afk = require("./afk");
-const { card, loadEmojis } = require("./feedback");
+const { card, loadEmojis, emojisLoaded } = require("./feedback");
 let cleanupRunning = false;
 let recoveryRunning = false;
 const recoveryCursors = new Map();
@@ -68,6 +68,7 @@ client.on("shardError", (error) => console.error("[discord shard]", error));
 
 client.on("messageCreate", async (message) => {
   if (!message.guild || message.author.bot) return;
+  await emojisLoaded();
   const prefix = vouch.getPrefix(message.guild.id);
   try {
     await afk.observe(message, prefix);
@@ -166,6 +167,7 @@ client.on("guildBanRemove", (ban) => {
 
 client.on("interactionCreate", async (interaction) => {
   try {
+    await emojisLoaded();
     if (await handleSetupInteraction(interaction)) return;
     if (await systems.handleInteraction(interaction)) return;
     if (interaction.isStringSelectMenu?.() && await vouch.handleInteraction(interaction)) return;
