@@ -563,6 +563,11 @@ test("force management blocks roles and restores forced nicknames without a puni
   assert.equal(titleOf(stripped), "Role Stripped");
   assert.equal(group.target.roles.cache.has(MEMBER_ROLE), false);
   assert.equal(group.other.roles.cache.has(MEMBER_ROLE), false);
+
+  const again = await run(group.guild, group.owner, `-forcenickname ${TARGET} Beta`);
+  assert.equal(titleOf(again), "Please Wait");
+  assert.match(textOf(again), /20/);
+  assert.equal(group.target.nickname, "Alpha");
 });
 
 test("unauthorized vouch role changes are reversed and only the human actor is stripstaffed", async () => {

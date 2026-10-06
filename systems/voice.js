@@ -79,28 +79,65 @@ async function voiceOverride(message) {
   return reply(message, "Voice Override", `You can view and join <#${channel.id}>.`);
 }
 
-async function dragAll(message) {
+function occupants(channel) {
+  const found = new Map();
+  const states = channel?.guild?.voiceStates?.cache;
+  if (typeof states?.values === "function") {
+    for (const state of states.values()) {
+      if (!state || state.channelId !== channel.id) continue;
+      const member = state.member || channel.guild.members?.cache?.get?.(state.id);
+      if (member?.id) found.set(String(member.id), member);
+    }
+  }
+  if (typeof channel?.members?.values === "function") {
+    for (const member of channel.members.values()) {
+      if (!member?.id) continue;
+      if (member.voice?.channelId && member.voice.channelId !== channel.id) continue;
+      found.set(String(member.id), member);
+    }
+  }
+  return [...found.values()];
+}
+
+async function resolveVoiceChannel(message, argument) {
+  const raw = String(argument || "").trim();
+  const mention = raw.match(/^<#(\d{17,20})>$/);
+  const id = mention?.[1] || (/^\d{17,20}$/.test(raw) ? raw : null);
+  if (!id) return null;
+  const mentioned = message.mentions?.channels?.first?.();
+  if (mentioned?.id === id) return mentioned;
+  return message.guild.channels.cache.get(id) || await message.guild.channels.fetch(id).catch(() => null);
+}
+
+function isVoiceChannel(channel) {
+  return channel?.type === ChannelType.GuildVoice || channel?.type === ChannelType.GuildStageVoice;
+}
+
+async function dragAll(message, argument) {
+  if (!String(argument || "").trim()) {
+    return reply(message, "Usage", "`-dragall #channel` or `-dragall channel-id`\nA voice channel mention or ID is required. Nobody is moved without one.");
+  }
+  const destination = currentChannel(message.member);
+  if (!destination) return reply(message, "Join a Voice Channel", "Join the voice channel people should be dragged into.");
+  const source = await resolveVoiceChannel(message, argument);
+  if (!isVoiceChannel(source)) return reply(message, "Missing Channel", "Mention a voice channel or paste its ID. Only people in that channel are moved.");
+  if (source.id === destination.id) return reply(message, "Same Channel", "Name a different voice channel. People already in your call are left where they are.");
   const wait = cooldowns.consume(message.guild.id, message.author.id, "dragall");
   if (wait) return reply(message, "Please Wait", cooldowns.waitText(wait));
-  const channel = currentChannel(message.member);
-  if (!channel) return reply(message, "Join a Voice Channel", "Join the voice channel people should be dragged into.");
-  const states = [...(message.guild.voiceStates?.cache?.values?.() || [])];
   let moved = 0;
   let skipped = 0;
-  for (const state of states) {
-    if (!state?.channelId || state.channelId === channel.id) continue;
-    const member = state.member || message.guild.members.cache.get(state.id);
-    if (!member || member.user?.bot) continue;
+  for (const member of occupants(source)) {
+    if (!member || member.user?.bot || member.id === message.author.id) continue;
     const guard = store.getGuard(message.guild.id, member.id);
     if (guard?.shield || guard?.godmode) {
       skipped += 1;
       continue;
     }
-    if (moved >= 20) break;
-    await member.voice.setChannel(channel, "Voice dragall").catch(() => null);
+    if (typeof member.voice?.setChannel !== "function") continue;
+    await member.voice.setChannel(destination, "Voice dragall").catch(() => null);
     moved += 1;
   }
-  return reply(message, "Drag All", `Moved **${moved}** member(s) into <#${channel.id}>.${skipped ? ` Skipped **${skipped}** protected member(s).` : ""}`);
+  return reply(message, "Drag All", `Moved **${moved}** member(s) from <#${source.id}> into <#${destination.id}>.${skipped ? ` Skipped **${skipped}** protected member(s).` : ""}`);
 }
 
 async function voiceHistory(message, userId) {
@@ -122,7 +159,7 @@ async function muteChannel(message, muted) {
   if (wait) return reply(message, "Please Wait", cooldowns.waitText(wait));
   const channel = currentChannel(message.member);
   if (!channel) return reply(message, "Join a Voice Channel", "Join the voice channel you want to mute.");
-  const members = [...(channel.members?.values?.() || [])];
+  const members = occupants(channel);
   let changed = 0;
   for (const member of members) {
     if (member.id === message.author.id || member.user?.bot) continue;
@@ -190,12 +227,12 @@ async function stsu(message, target, enabled) {
   return reply(message, enabled ? "STSU" : "STSU Cleared", `<@${target.id}> ${enabled ? "stays server-muted until -unstsu" : "is no longer force-muted"}.`);
 }
 
-async function runRankCommand(message, command, target) {
+async function runRankCommand(message, command, target, channelArgument) {
   if (!access.canUseRankCommand(message.member, command)) return denyRank(message, command);
   if (command === "forceownership") return takeOwnership(message, false);
   if (command === "forceclaim") return takeOwnership(message, true);
   if (command === "voiceoverride") return voiceOverride(message);
-  if (command === "dragall") return dragAll(message);
+  if (command === "dragall") return dragAll(message, channelArgument);
   if (command === "voicehistory") return voiceHistory(message, target?.id);
   if (command === "godmode" || command === "ungodmode") {
     const user = target || message.member;

@@ -40,6 +40,7 @@ function nextGuild() {
 
 function makeMember(guild, id, options = {}) {
   const voice = {
+    id,
     channelId: options.channelId || null,
     channel: options.channel || null,
     serverMute: false,
@@ -245,6 +246,57 @@ test("franchise can force ownership and a lower rank cannot", async () => {
   assert.equal(titleOf(override), "Voice Override");
   const drag = await run(guild, member, "-dragall");
   assert.equal(titleOf(drag), "Rank Required");
+});
+
+test("dragall moves only the named channel and muteall stays in the current call", async () => {
+  const guild = makeGuild();
+  const founder = makeMember(guild, "111000000000000020", { name: "founder" });
+  store.setStaff(guild.id, founder.id, "founder", OWNER);
+  const destination = { id: "444000000000000101", type: ChannelType.GuildVoice, guild, members: new Map() };
+  const source = { id: "444000000000000102", type: ChannelType.GuildVoice, guild, members: new Map() };
+  const other = { id: "444000000000000103", type: ChannelType.GuildVoice, guild, members: new Map() };
+  for (const channel of [destination, source, other]) guild.channels.cache.set(channel.id, channel);
+
+  function place(member, channel) {
+    member.voice.channel = channel;
+    member.voice.channelId = channel.id;
+    channel.members.set(member.id, member);
+  }
+  place(founder, destination);
+  const pulledA = makeMember(guild, "111000000000000021");
+  const pulledB = makeMember(guild, "111000000000000022");
+  const bystander = makeMember(guild, "111000000000000023");
+  const shielded = makeMember(guild, "111000000000000024");
+  place(pulledA, source);
+  place(pulledB, source);
+  place(shielded, source);
+  place(bystander, other);
+  store.saveGuard(guild.id, shielded.id, { shield: true });
+
+  const missing = await run(guild, founder, "-dragall");
+  assert.equal(titleOf(missing), "Usage");
+  const unnamed = await run(guild, founder, "-dragall lobby");
+  assert.equal(titleOf(unnamed), "Missing Channel");
+  assert.equal(pulledA.voice.channelId, source.id);
+  assert.equal(bystander.voice.channelId, other.id);
+
+  const drag = await run(guild, founder, `-dragall ${source.id}`);
+  assert.equal(titleOf(drag), "Drag All");
+  assert.match(textOf(drag), new RegExp(source.id));
+  assert.equal(pulledA.voice.channelId, destination.id);
+  assert.equal(pulledB.voice.channelId, destination.id);
+  assert.equal(bystander.voice.channelId, other.id);
+  assert.equal(shielded.voice.channelId, source.id);
+
+  const muted = [];
+  for (const member of [founder, pulledA, pulledB, bystander, shielded]) {
+    member.voice.setMute = async (value) => {
+      muted.push([member.id, value]);
+    };
+  }
+  const mute = await run(guild, founder, "-muteall");
+  assert.equal(titleOf(mute), "Channel Muted");
+  assert.deepEqual(muted.map((entry) => entry[0]).sort(), [pulledA.id, pulledB.id].sort());
 });
 
 test("role limits and vouch caps use the new command names", async () => {

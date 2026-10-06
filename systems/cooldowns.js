@@ -8,7 +8,11 @@ const COOLDOWNS_MS = {
   muteall: 8000,
   unmuteall: 8000,
   unbanall: 15000,
-  rolestrip: 10000,
+  rolestrip: 20000,
+  forcenickname: 20000,
+  unforcenickname: 20000,
+  forcerolestrip: 20000,
+  unforcerolestrip: 20000,
   stsu: 3000
 };
 

@@ -5,6 +5,7 @@ const roles = require("./roles");
 const { resolveMember, resolveRole, resolveUserId } = require("./resolve");
 const { mentionUser } = require("./util");
 const { embed, reply } = require("./ui");
+const cooldowns = require("../systems/cooldowns");
 const { ActionRowBuilder, StringSelectMenuBuilder, MessageFlags } = require("discord.js");
 
 const NICK_LIMIT = 32;
@@ -18,8 +19,16 @@ function usage(prefix) {
     `\`${prefix}forcestrip @role\` — remove that role from everyone`,
     `\`${prefix}unforcerolestrip @user\``,
     `\`${prefix}unforcestrip @user\``,
-    `\`${prefix}rolestrip @role\``
+    `\`${prefix}rolestrip @role\``,
+    "",
+    "Each force command has a **20 second** cooldown."
   ].join("\n");
+}
+
+function forceCooldown(message, action) {
+  const wait = cooldowns.consume(message.guild.id, message.author.id, action);
+  if (!wait) return null;
+  return reply(message, "Please Wait", cooldowns.waitText(wait));
 }
 
 function panelRow() {
@@ -79,6 +88,8 @@ async function forceNickname(message, userArg, nickname) {
   if (!name || name.length > NICK_LIMIT) {
     return reply(message, "Invalid Nickname", `Provide a nickname up to ${NICK_LIMIT} characters.`);
   }
+  const wait = forceCooldown(message, "forcenickname");
+  if (wait) return wait;
   store.setForcedNick(message.guild.id, member.id, name, message.author.id);
   try {
     await roles.applyNickname(member, name, `Forced nickname by ${message.author.id}`);
@@ -100,9 +111,12 @@ async function unforceNickname(message, userArg) {
   const member = await resolveMember(message, userArg);
   const userId = member?.id || await resolveUserId(message, userArg);
   if (!userId) return reply(message, "Missing User", "Mention a user or provide their user ID.");
-  if (!store.clearForcedNick(message.guild.id, userId)) {
+  if (!store.getForcedNick(message.guild.id, userId)) {
     return reply(message, "No Forced Nickname", "That user does not have a forced nickname.");
   }
+  const wait = forceCooldown(message, "unforcenickname");
+  if (wait) return wait;
+  store.clearForcedNick(message.guild.id, userId);
   if (member?.setNickname) {
     try {
       await roles.applyNickname(member, null, `Forced nickname cleared by ${message.author.id}`);
@@ -134,6 +148,8 @@ async function forceRoleStrip(message, userArg, roleArg) {
   if (member.id === message.guild.ownerId && message.member.id !== message.guild.ownerId) {
     return reply(message, "Protected User", "Only the server owner can block roles on the owner.");
   }
+  const wait = forceCooldown(message, "forcerolestrip");
+  if (wait) return wait;
   store.addForcedRoleStrip(message.guild.id, member.id, role.id, message.author.id);
   if (member.roles.cache.has(role.id)) {
     if (store.getConfig(message.guild.id).vouch_role_id === role.id) {
@@ -160,7 +176,12 @@ async function unforceRoleStrip(message, userArg) {
   const userId = await resolveUserId(message, userArg);
   if (!userId) return reply(message, "Missing User", "Mention a user or provide their user ID.");
   const existing = store.listForcedRoleStrips(message.guild.id, userId);
-  if (!existing.length || !store.clearForcedRoleStrips(message.guild.id, userId)) {
+  if (!existing.length) {
+    return reply(message, "No Role Blocks", "That user has no forced role strips.");
+  }
+  const wait = forceCooldown(message, "unforcerolestrip");
+  if (wait) return wait;
+  if (!store.clearForcedRoleStrips(message.guild.id, userId)) {
     return reply(message, "No Role Blocks", "That user has no forced role strips.");
   }
   await logging.record(message.guild, {
@@ -174,10 +195,10 @@ async function unforceRoleStrip(message, userArg) {
 
 async function stripRoleFromEveryone(message, roleArg) {
   if (!access.canUseForce(message.member)) return reply(message, "Not Allowed", "Only Founders, Gods, and the server owner can strip a role from everyone.");
-  const wait = require("../systems/cooldowns").consume(message.guild.id, message.author.id, "rolestrip");
-  if (wait) return reply(message, "Please Wait", require("../systems/cooldowns").waitText(wait));
   const role = await resolveRole(message, roleArg);
   if (!role || role.id === message.guild.id) return reply(message, "Invalid Role", "Mention a role, role ID, or role name.");
+  const wait = forceCooldown(message, "rolestrip");
+  if (wait) return wait;
   if (!roles.botCanManageRole(message.guild, role)) {
     return reply(message, "Cannot Manage Role", "Move my role above that role and grant me Manage Roles.");
   }

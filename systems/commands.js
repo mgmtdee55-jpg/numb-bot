@@ -582,7 +582,7 @@ async function handleCommand(message, args, prefix) {
   }
   if (RANK_COMMANDS.has(name)) {
     const target = await resolveMember(message, args[1]);
-    await voice.runRankCommand(message, name, target);
+    await voice.runRankCommand(message, name, target, args[1]);
     return true;
   }
   if (name === "vc") {
@@ -593,7 +593,7 @@ async function handleCommand(message, args, prefix) {
     }
     if (RANK_COMMANDS.has(sub)) {
       const target = await resolveMember(message, args[2]);
-      await voice.runRankCommand(message, sub, target);
+      await voice.runRankCommand(message, sub, target, args[2]);
       return true;
     }
   }
