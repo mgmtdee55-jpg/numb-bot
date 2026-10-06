@@ -1245,6 +1245,52 @@ test("J2C category routing advances when each selected category reaches 99 conne
   assert.equal(thirdCreated.parentId, categories[2].id);
 });
 
+test("J2C overflows to the next of 3 categories when a category hits the 50-channel cap", async () => {
+  const guild = makeGuild("category-channel-cap-overflow-guild");
+  const categories = [makeCategory(guild), makeCategory(guild), makeCategory(guild), makeCategory(guild)];
+  const j2c = makeVoiceChannel(guild);
+  const fillCategory = (category, prefix, count) => {
+    for (let index = 0; index < count; index += 1) {
+      const channel = makeVoiceChannel(guild, `${prefix}-${index}`);
+      channel.parentId = category.id;
+    }
+  };
+  fillCategory(categories[0], "cap1", voice.DISCORD_CATEGORY_CHANNEL_CAP);
+  db.setConfig({
+    guild_id: guild.id,
+    j2c_channel_id: j2c.id,
+    category_id: categories[0].id,
+    category_ids: JSON.stringify(categories.map((category) => category.id)),
+    server_interface_channel_id: "disabled",
+    server_interface_message_id: null,
+    name_template: "{nickname}'s VC",
+    user_limit: 0,
+    bitrate: 64000,
+    cleanup_seconds: 300,
+    server_interface_enabled: 0
+  });
+  assert.deepEqual(
+    voice.configuredCategoryIds(db.getConfig(guild.id)),
+    [categories[0].id, categories[1].id, categories[2].id]
+  );
+
+  const firstMember = makeMember(guild, "383838383838383838", { channelId: j2c.id });
+  const handler = createVoiceStateHandler({
+    db,
+    createTempChannel: voice.createTempChannel,
+    renderVoiceChannelInterface: async () => {},
+    cleanupEmptyTempChannels: voice.cleanupEmptyTempChannels,
+    cleanupTempChannel: voice.cleanupTempChannel
+  });
+  await handler({ channelId: null }, { guild, id: firstMember.id, member: firstMember, channelId: j2c.id });
+  assert.equal(guild.channels.cache.get(firstMember.voice.channelId).parentId, categories[1].id);
+
+  fillCategory(categories[1], "cap2", voice.DISCORD_CATEGORY_CHANNEL_CAP);
+  const secondMember = makeMember(guild, "393939393939393939", { channelId: j2c.id });
+  await handler({ channelId: null }, { guild, id: secondMember.id, member: secondMember, channelId: j2c.id });
+  assert.equal(guild.channels.cache.get(secondMember.voice.channelId).parentId, categories[2].id);
+});
+
 test("category overflow threshold is configurable and reservations account for simultaneous creations", async () => {
   const originalThreshold = process.env.VC_CATEGORY_OVERFLOW_THRESHOLD;
   process.env.VC_CATEGORY_OVERFLOW_THRESHOLD = "2";
@@ -1468,6 +1514,8 @@ test("setup is owner-only, button-driven, cancellable, configurable, and reconfi
   });
   await setupWizard.handleSetupInteraction(goCategory);
   assert.match(goCategory.responseMessage.payload.embeds[0].data.title, /Category/);
+  assert.match(goCategory.responseMessage.payload.embeds[0].data.description, /up to 3 overflow categories/);
+  assert.equal(goCategory.responseMessage.payload.components[0].components[0].data.max_values, 3);
 
   const backToJ2c = makeInteraction(guild, `setup:${owner.id}:back`, {
     message: goCategory.responseMessage

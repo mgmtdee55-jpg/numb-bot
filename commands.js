@@ -5,6 +5,8 @@ const controls = require("./interface");
 const { buildVoiceChannelInterfacePayload, renderVoiceChannelInterface } = require("./voice");
 const { consumeActionCooldown } = require("./action-cooldowns");
 const { logThrottledError } = require("./log-throttle");
+const moderation = require("./moderation");
+const vouch = require("./vouch");
 
 function embed(title, description) {
   return new EmbedBuilder().setColor(0x2b2d31).setTitle(title).setDescription(description);
@@ -25,8 +27,12 @@ async function resolveMember(message, argument) {
   });
 }
 
+const systems = require("./systems");
+
 async function handleCommand(message, client, prefix = "-") {
-  const args = message.content.trim().split(/\s+/);
+  const args = vouch.expandArgs(message, prefix);
+  if (!args[0]) return;
+  if (await systems.handleCommand(message, args, prefix)) return;
   const command = args[0].toLowerCase();
   const vcCommand = `${prefix}vc`.toLowerCase();
 
@@ -150,7 +156,8 @@ async function handleCommand(message, client, prefix = "-") {
               "`-vc lock|unlock|ghost|unghost` · Manage your channel",
               "`-vc kick|ban|unban|permit @user|user-id` · Manage a member",
               "`-vc claim` · Claim an unowned channel",
-              "`-vc limit <0-99>` · Set your channel limit"
+              "`-vc limit <0-99>` · Set your channel limit",
+              "`-ban` / `-fakepermissions` · Server bans (fake permissions required)"
             ].join("\n")
           )
         ]
@@ -158,6 +165,10 @@ async function handleCommand(message, client, prefix = "-") {
     }
     return message.reply({ embeds: [embed("Unknown Command", "Use `-vc help` to see VoiceMaster commands.")] });
   }
+
+  if (await vouch.handleCommand(message, args, prefix)) return;
+
+  if (await moderation.handleCommand(message, args, prefix)) return;
 
   const legacyActions = new Map([
     [`${prefix}lock`, "lock"],
@@ -170,8 +181,6 @@ async function handleCommand(message, client, prefix = "-") {
 
   const legacyTargetActions = new Map([
     [`${prefix}kick`, "kick"],
-    [`${prefix}ban`, "ban"],
-    [`${prefix}unban`, "unban"],
     [`${prefix}permit`, "permit"]
   ]);
   if (legacyTargetActions.has(command)) {

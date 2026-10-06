@@ -57,6 +57,76 @@ addColumnIfMissing("temp_channels", "deleted_at", "INTEGER");
 addColumnIfMissing("temp_channels", "creator_id", "TEXT");
 db.exec("UPDATE temp_channels SET creator_id = owner_id WHERE creator_id IS NULL");
 
+db.exec(`
+CREATE TABLE IF NOT EXISTS fake_permissions (
+  guild_id TEXT NOT NULL,
+  role_id TEXT NOT NULL,
+  permission TEXT NOT NULL,
+  PRIMARY KEY (guild_id, role_id, permission)
+);
+
+CREATE TABLE IF NOT EXISTS fake_permission_templates (
+  user_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (user_id, name)
+);
+
+CREATE TABLE IF NOT EXISTS hardbans (
+  guild_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  reason TEXT,
+  moderator_id TEXT,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (guild_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS tempbans (
+  guild_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  reason TEXT,
+  moderator_id TEXT,
+  expires_at INTEGER NOT NULL,
+  PRIMARY KEY (guild_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS ban_settings (
+  guild_id TEXT PRIMARY KEY,
+  purge_days INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS ban_history (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  guild_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  action TEXT NOT NULL,
+  reason TEXT,
+  moderator_id TEXT,
+  created_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS fake_user_permissions (
+  guild_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  permission TEXT NOT NULL,
+  PRIMARY KEY (guild_id, user_id, permission)
+);
+
+CREATE TABLE IF NOT EXISTS foreverbans (
+  guild_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  reason TEXT,
+  moderator_id TEXT,
+  created_at INTEGER NOT NULL,
+  username TEXT,
+  global_name TEXT,
+  display_name TEXT,
+  account_created_at INTEGER,
+  PRIMARY KEY (guild_id, user_id)
+);
+`);
+
 const saveConfigStatement = db.prepare(`
   INSERT INTO guild_config (
     guild_id, j2c_channel_id, category_id, server_interface_channel_id,
@@ -128,6 +198,13 @@ module.exports = {
     `).run(ownerId, channelId);
     return result.changes > 0;
   },
+  forceOwner(channelId, ownerId) {
+    const result = db.prepare(`
+      UPDATE temp_channels SET owner_id = ?
+      WHERE channel_id = ? AND deleted_at IS NULL
+    `).run(ownerId, channelId);
+    return result.changes > 0;
+  },
   clearOwner(channelId, ownerId) {
     return db.prepare(`
       UPDATE temp_channels SET owner_id = NULL
@@ -161,7 +238,182 @@ module.exports = {
   isPermitted(channelId, userId) {
     return !!db.prepare("SELECT 1 FROM vc_permits WHERE channel_id=? AND user_id=?").get(channelId, userId);
   },
+  addFakePermission(guildId, roleId, permission) {
+    db.prepare(
+      "INSERT OR IGNORE INTO fake_permissions(guild_id, role_id, permission) VALUES(?,?,?)"
+    ).run(guildId, roleId, permission);
+  },
+  removeFakePermission(guildId, roleId, permission) {
+    return db.prepare(
+      "DELETE FROM fake_permissions WHERE guild_id=? AND role_id=? AND permission=?"
+    ).run(guildId, roleId, permission).changes > 0;
+  },
+  listFakePermissions(guildId) {
+    return db.prepare(
+      "SELECT role_id, permission FROM fake_permissions WHERE guild_id=? ORDER BY role_id, permission"
+    ).all(guildId);
+  },
+  fakePermissionsForRoles(guildId, roleIds) {
+    if (!roleIds.length) return [];
+    const placeholders = roleIds.map(() => "?").join(",");
+    return db.prepare(
+      `SELECT DISTINCT permission FROM fake_permissions WHERE guild_id=? AND role_id IN (${placeholders})`
+    ).all(guildId, ...roleIds).map((row) => row.permission);
+  },
+  roleHasFakePermission(guildId, roleId, permission) {
+    return !!db.prepare(
+      "SELECT 1 FROM fake_permissions WHERE guild_id=? AND role_id=? AND permission=?"
+    ).get(guildId, roleId, permission);
+  },
+  resetFakePermissions(guildId, { includeForeverban = false } = {}) {
+    db.prepare("DELETE FROM fake_permissions WHERE guild_id=? AND permission != 'foreverban_members'").run(guildId);
+    db.prepare("DELETE FROM fake_user_permissions WHERE guild_id=? AND permission != 'foreverban_members'").run(guildId);
+    if (includeForeverban) {
+      db.prepare("DELETE FROM fake_permissions WHERE guild_id=? AND permission = 'foreverban_members'").run(guildId);
+      db.prepare("DELETE FROM fake_user_permissions WHERE guild_id=? AND permission = 'foreverban_members'").run(guildId);
+    }
+  },
+  addFakeUserPermission(guildId, userId, permission) {
+    db.prepare(
+      "INSERT OR IGNORE INTO fake_user_permissions(guild_id, user_id, permission) VALUES(?,?,?)"
+    ).run(guildId, userId, permission);
+  },
+  removeFakeUserPermission(guildId, userId, permission) {
+    return db.prepare(
+      "DELETE FROM fake_user_permissions WHERE guild_id=? AND user_id=? AND permission=?"
+    ).run(guildId, userId, permission).changes > 0;
+  },
+  listFakeUserPermissions(guildId) {
+    return db.prepare(
+      "SELECT user_id, permission FROM fake_user_permissions WHERE guild_id=? ORDER BY user_id, permission"
+    ).all(guildId);
+  },
+  fakePermissionsForUser(guildId, userId) {
+    return db.prepare(
+      "SELECT permission FROM fake_user_permissions WHERE guild_id=? AND user_id=?"
+    ).all(guildId, userId).map((row) => row.permission);
+  },
+  addForeverban(row) {
+    db.prepare(`
+      INSERT INTO foreverbans(
+        guild_id, user_id, reason, moderator_id, created_at,
+        username, global_name, display_name, account_created_at
+      ) VALUES (
+        @guild_id, @user_id, @reason, @moderator_id, @created_at,
+        @username, @global_name, @display_name, @account_created_at
+      )
+      ON CONFLICT(guild_id, user_id) DO UPDATE SET
+        reason = excluded.reason,
+        moderator_id = excluded.moderator_id,
+        created_at = excluded.created_at,
+        username = excluded.username,
+        global_name = excluded.global_name,
+        display_name = excluded.display_name,
+        account_created_at = excluded.account_created_at
+    `).run(row);
+  },
+  removeForeverban(guildId, userId) {
+    return db.prepare("DELETE FROM foreverbans WHERE guild_id=? AND user_id=?").run(guildId, userId).changes > 0;
+  },
+  isForeverbanned(guildId, userId) {
+    return !!db.prepare("SELECT 1 FROM foreverbans WHERE guild_id=? AND user_id=?").get(guildId, userId);
+  },
+  getForeverban(guildId, userId) {
+    return db.prepare("SELECT * FROM foreverbans WHERE guild_id=? AND user_id=?").get(guildId, userId);
+  },
+  listForeverbans(guildId) {
+    return db.prepare("SELECT * FROM foreverbans WHERE guild_id=? ORDER BY created_at DESC").all(guildId);
+  },
+  saveFakePermissionTemplate(userId, name, payload) {
+    db.prepare(`
+      INSERT INTO fake_permission_templates(user_id, name, payload, updated_at)
+      VALUES(?,?,?,?)
+      ON CONFLICT(user_id, name) DO UPDATE SET payload = excluded.payload, updated_at = excluded.updated_at
+    `).run(userId, name, payload, Date.now());
+  },
+  getFakePermissionTemplate(userId, name) {
+    return db.prepare(
+      "SELECT name, payload FROM fake_permission_templates WHERE user_id=? AND name=?"
+    ).get(userId, name);
+  },
+  listFakePermissionTemplates(userId) {
+    return db.prepare(
+      "SELECT name, payload, updated_at FROM fake_permission_templates WHERE user_id=? ORDER BY name"
+    ).all(userId);
+  },
+  getBanPurgeDays(guildId) {
+    return db.prepare("SELECT purge_days FROM ban_settings WHERE guild_id=?").get(guildId)?.purge_days ?? 0;
+  },
+  setBanPurgeDays(guildId, days) {
+    db.prepare(`
+      INSERT INTO ban_settings(guild_id, purge_days) VALUES(?,?)
+      ON CONFLICT(guild_id) DO UPDATE SET purge_days = excluded.purge_days
+    `).run(guildId, days);
+  },
+  addHardban(row) {
+    db.prepare(`
+      INSERT INTO hardbans(guild_id, user_id, reason, moderator_id, created_at)
+      VALUES(@guild_id, @user_id, @reason, @moderator_id, @created_at)
+      ON CONFLICT(guild_id, user_id) DO UPDATE SET
+        reason = excluded.reason,
+        moderator_id = excluded.moderator_id,
+        created_at = excluded.created_at
+    `).run(row);
+  },
+  removeHardban(guildId, userId) {
+    return db.prepare("DELETE FROM hardbans WHERE guild_id=? AND user_id=?").run(guildId, userId).changes > 0;
+  },
+  isHardbanned(guildId, userId) {
+    return !!db.prepare("SELECT 1 FROM hardbans WHERE guild_id=? AND user_id=?").get(guildId, userId);
+  },
+  getHardban(guildId, userId) {
+    return db.prepare("SELECT * FROM hardbans WHERE guild_id=? AND user_id=?").get(guildId, userId);
+  },
+  listHardbans(guildId) {
+    return db.prepare("SELECT * FROM hardbans WHERE guild_id=? ORDER BY created_at DESC").all(guildId);
+  },
+  clearHardbans(guildId) {
+    const rows = db.prepare("SELECT * FROM hardbans WHERE guild_id=?").all(guildId);
+    db.prepare("DELETE FROM hardbans WHERE guild_id=?").run(guildId);
+    return rows;
+  },
+  addTempban(row) {
+    db.prepare(`
+      INSERT INTO tempbans(guild_id, user_id, reason, moderator_id, expires_at)
+      VALUES(@guild_id, @user_id, @reason, @moderator_id, @expires_at)
+      ON CONFLICT(guild_id, user_id) DO UPDATE SET
+        reason = excluded.reason,
+        moderator_id = excluded.moderator_id,
+        expires_at = excluded.expires_at
+    `).run(row);
+  },
+  removeTempban(guildId, userId) {
+    db.prepare("DELETE FROM tempbans WHERE guild_id=? AND user_id=?").run(guildId, userId);
+  },
+  getTempban(guildId, userId) {
+    return db.prepare("SELECT * FROM tempbans WHERE guild_id=? AND user_id=?").get(guildId, userId);
+  },
+  listTempbans() {
+    return db.prepare("SELECT * FROM tempbans").all();
+  },
+  addBanHistory(row) {
+    db.prepare(`
+      INSERT INTO ban_history(guild_id, user_id, action, reason, moderator_id, created_at)
+      VALUES(@guild_id, @user_id, @action, @reason, @moderator_id, @created_at)
+    `).run(row);
+  },
+  getBanHistoryForUser(guildId, userId) {
+    return db.prepare(`
+      SELECT * FROM ban_history WHERE guild_id=? AND user_id=? ORDER BY created_at DESC LIMIT 10
+    `).all(guildId, userId);
+  },
+  getRecentBanHistory(guildId, limit = 10) {
+    return db.prepare(`
+      SELECT * FROM ban_history WHERE guild_id=? ORDER BY created_at DESC LIMIT ?
+    `).all(guildId, limit);
+  },
   close() {
     db.close();
-  }
+  },
+  connection: db
 };

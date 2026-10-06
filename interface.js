@@ -11,6 +11,7 @@ const db = require("./db");
 const { withChannelLock } = require("./channel-lock");
 const { renderVoiceChannelInterface } = require("./voice");
 const { consumeActionCooldown } = require("./action-cooldowns");
+const access = require("./systems/access");
 const { logThrottledError } = require("./log-throttle");
 
 function result(title, description) {
@@ -191,6 +192,12 @@ async function handleButton(interaction) {
     if (!ok) return interaction.editReply(privateResult("Owner Only", "Only the current channel owner can use this control."));
     return interaction.editReply(privateResult("Unlocked", "Your voice channel is now unlocked."));
   }
+  if (action === "ghost" || action === "unghost") {
+    const actor = interaction.member || interaction.guild?.members?.cache?.get(interaction.user?.id);
+    if (!access.canGhost(actor)) {
+      return interaction.editReply(privateResult("Rank Required", "Hiding or showing a VC requires Voice Premium or higher."));
+    }
+  }
   if (action === "ghost") {
     const cooldownReply = await actionCooldownReply(interaction, channel, action);
     if (cooldownReply) return cooldownReply;
@@ -367,6 +374,9 @@ async function runTextAction(message, action) {
   }
   if (!channel || !row || row.owner_id !== message.author.id) {
     return message.reply(result("Owner Only", "Only the current owner can control this temporary voice channel."));
+  }
+  if ((action === "ghost" || action === "unghost") && !access.canGhost(message.member)) {
+    return message.reply(result("Rank Required", "Hiding or showing a VC requires Voice Premium or higher."));
   }
   const cooldownReply = await actionCooldownReply(message, channel, action);
   if (cooldownReply) return cooldownReply;

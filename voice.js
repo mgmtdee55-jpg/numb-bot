@@ -14,8 +14,11 @@ const tempInterfaceTasks = new Map();
 const serverInterfaceTasks = new Map();
 const interfaceEmojiStrings = new Map();
 const pendingCategoryMembers = new Map();
+const pendingCategoryChannels = new Map();
 const SERVER_INTERFACE_TOPIC = "Persistent VoiceMaster server interface";
 const DEFAULT_CATEGORY_OVERFLOW_THRESHOLD = 99;
+const MAX_TEMP_CATEGORIES = 3;
+const DISCORD_CATEGORY_CHANNEL_CAP = 50;
 const CATEGORY_RESERVATION_TTL_MS = 10000;
 const VC_INTERFACE_ICONS = {
   lock: "1472443164995358872",
@@ -122,7 +125,50 @@ function configuredCategoryIds(config) {
   } catch {
     ids = [];
   }
-  return [...new Set([config.category_id, ...ids].filter(Boolean))];
+  return [...new Set([config.category_id, ...ids].filter(Boolean))].slice(0, MAX_TEMP_CATEGORIES);
+}
+
+function categoryChildCount(guild, categoryId) {
+  return [...guild.channels.cache.values()].filter((channel) => channel.parentId === categoryId).length;
+}
+
+function pendingSetSize(store, key) {
+  return store.get(key)?.size || 0;
+}
+
+function categoryChannelLoad(guild, categoryId) {
+  return categoryChildCount(guild, categoryId)
+    + pendingSetSize(pendingCategoryChannels, `${guild.id}:${categoryId}`);
+}
+
+function categoryMemberLoad(guild, categoryId) {
+  const channels = [...guild.channels.cache.values()]
+    .filter((channel) => channel.type === ChannelType.GuildVoice && channel.parentId === categoryId);
+  const connectedMembers = new Set(channels.flatMap((channel) => [...channel.members.keys()]));
+  const pendingMembers = pendingCategoryMembers.get(`${guild.id}:${categoryId}`) || new Set();
+  const notYetObservedReservations = [...pendingMembers]
+    .filter((userId) => !connectedMembers.has(userId)).length;
+  return connectedMembers.size + notYetObservedReservations;
+}
+
+function isCategoryLimitError(error) {
+  return [30013, 30030, 50035].includes(Number(error?.code))
+    || /maximum|full|limit|category/i.test(error?.message || "");
+}
+
+function addPending(store, key, reservationId) {
+  let reservations = store.get(key);
+  if (!reservations) {
+    reservations = new Set();
+    store.set(key, reservations);
+  }
+  reservations.add(reservationId);
+}
+
+function removePending(store, key, reservationId) {
+  const current = store.get(key);
+  current?.delete(reservationId);
+  if (current?.size === 0) store.delete(key);
 }
 
 function categoryOverflowThreshold() {
@@ -138,26 +184,24 @@ function reserveTempCategory(guild, config, memberId = null) {
   if (!categoryIds.length && config.category_id) categoryIds.push(config.category_id);
   if (!categoryIds.length) throw new Error(`No temporary VC categories configured for guild ${guild.id}.`);
 
-  const loads = categoryIds.map((categoryId) => {
-    const channels = [...guild.channels.cache.values()]
-      .filter((channel) => channel.type === ChannelType.GuildVoice && channel.parentId === categoryId);
-    const connectedMembers = new Set(channels.flatMap((channel) => [...channel.members.keys()]));
-    const pendingMembers = pendingCategoryMembers.get(`${guild.id}:${categoryId}`) || new Set();
-    const notYetObservedReservations = [...pendingMembers]
-      .filter((userId) => !connectedMembers.has(userId)).length;
-    return connectedMembers.size + notYetObservedReservations;
+  const memberCap = categoryOverflowThreshold();
+  let selectedIndex = categoryIds.findIndex((categoryId, index) => {
+    const isLast = index === categoryIds.length - 1;
+    if (categoryChannelLoad(guild, categoryId) >= DISCORD_CATEGORY_CHANNEL_CAP) return false;
+    if (!isLast && categoryMemberLoad(guild, categoryId) >= memberCap) return false;
+    return true;
   });
-  const availableIndex = loads.findIndex((load) => load < categoryOverflowThreshold());
-  const selectedIndex = availableIndex < 0 ? categoryIds.length - 1 : availableIndex;
+  if (selectedIndex < 0) {
+    selectedIndex = categoryIds.findIndex((categoryId) => (
+      categoryChannelLoad(guild, categoryId) < DISCORD_CATEGORY_CHANNEL_CAP
+    ));
+  }
+  if (selectedIndex < 0) selectedIndex = categoryIds.length - 1;
   const categoryId = categoryIds[selectedIndex];
   const reservationKey = `${guild.id}:${categoryId}`;
   const reservationId = memberId || Symbol("pending category member");
-  let reservations = pendingCategoryMembers.get(reservationKey);
-  if (!reservations) {
-    reservations = new Set();
-    pendingCategoryMembers.set(reservationKey, reservations);
-  }
-  reservations.add(reservationId);
+  addPending(pendingCategoryMembers, reservationKey, reservationId);
+  addPending(pendingCategoryChannels, reservationKey, reservationId);
   let released = false;
 
   return {
@@ -165,16 +209,15 @@ function reserveTempCategory(guild, config, memberId = null) {
     release(waitForVoiceCache = true) {
       if (released) return;
       released = true;
-      const releaseReservation = () => {
-        const current = pendingCategoryMembers.get(reservationKey);
-        current?.delete(reservationId);
-        if (current?.size === 0) pendingCategoryMembers.delete(reservationKey);
+      removePending(pendingCategoryChannels, reservationKey, reservationId);
+      const releaseMemberReservation = () => {
+        removePending(pendingCategoryMembers, reservationKey, reservationId);
       };
       if (!waitForVoiceCache) {
-        releaseReservation();
+        releaseMemberReservation();
         return;
       }
-      const timer = setTimeout(releaseReservation, CATEGORY_RESERVATION_TTL_MS);
+      const timer = setTimeout(releaseMemberReservation, CATEGORY_RESERVATION_TTL_MS);
       timer.unref?.();
     }
   };
@@ -233,11 +276,11 @@ async function renderVoiceChannelInterface(channel, ownerId, savedMessageId = nu
   }
 }
 
-async function createTempChannel(guild, member, config) {
+async function createTempChannelInCategory(guild, member, config, categoryId) {
   const channel = await guild.channels.create({
     name: renderName(config.name_template || "{nickname}'s Channel", member),
     type: ChannelType.GuildVoice,
-    parent: config.category_id,
+    parent: categoryId,
     bitrate: config.bitrate,
     userLimit: config.user_limit,
     permissionOverwrites: [
@@ -271,6 +314,25 @@ async function createTempChannel(guild, member, config) {
     }
     throw error;
   }
+}
+
+async function createTempChannel(guild, member, config) {
+  const preferred = config.category_id;
+  const categoryIds = [...new Set([preferred, ...configuredCategoryIds(config)].filter(Boolean))];
+  if (!categoryIds.length) throw new Error(`No temporary VC categories configured for guild ${guild.id}.`);
+
+  let lastError;
+  for (const [index, categoryId] of categoryIds.entries()) {
+    const isLast = index === categoryIds.length - 1;
+    if (!isLast && categoryChildCount(guild, categoryId) >= DISCORD_CATEGORY_CHANNEL_CAP) continue;
+    try {
+      return await createTempChannelInCategory(guild, member, config, categoryId);
+    } catch (error) {
+      lastError = error;
+      if (!isCategoryLimitError(error) || isLast) throw error;
+    }
+  }
+  throw lastError || new Error("All configured VoiceMaster categories are full.");
 }
 
 async function createServerInterface(guild, config, existingConfig = null, { deferExistingEdit = false } = {}) {
@@ -511,6 +573,8 @@ module.exports = {
   configuredCategoryIds,
   categoryOverflowThreshold,
   DEFAULT_CATEGORY_OVERFLOW_THRESHOLD,
+  MAX_TEMP_CATEGORIES,
+  DISCORD_CATEGORY_CHANNEL_CAP,
   VC_INTERFACE_ICONS,
   getInterfaceEmojiStrings
 };

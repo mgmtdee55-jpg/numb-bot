@@ -13,7 +13,7 @@ Existing Discord.js bot for temporary voice channels and VoiceMaster controls.
 
 Configuration, temporary-channel ownership, bans, permits, and cleanup timers persist in SQLite at `./data/vc.sqlite` by default. Set `DB_PATH` to use a different location. The command prefix defaults to `-`.
 
-Temporary VC category overflow is based on connected members across voice channels in each configured category. `VC_CATEGORY_OVERFLOW_THRESHOLD` sets the threshold (default `99`); when one category reaches it, new VCs use the next configured category. This setting does not move existing VCs.
+Setup accepts up to **3 overflow categories**, used in the order you select them. New temporary VCs stay in the current category until it hits Discord's **50-channel cap** (or `99` connected members; override with `VC_CATEGORY_OVERFLOW_THRESHOLD`). Then new VCs use the next selected category. Existing VCs are not moved.
 
 On startup, VoiceMaster reconciles saved temporary VCs and their interface messages without resetting SQLite history. A rotating watchdog checks a bounded batch of VCs every minute and repairs missing interfaces; Discord.js handles REST rate limits while channel operations remain independently serialized.
 

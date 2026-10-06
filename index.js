@@ -22,8 +22,9 @@ const { handleSetupInteraction } = require("./setup-wizard");
 const { handleButton, handleSelect, handleModal } = require("./interface");
 const { createVoiceStateHandler } = require("./voice-events");
 const { logThrottledError } = require("./log-throttle");
-
-const PREFIX = process.env.PREFIX || "-";
+const { startTempbanScheduler, enforceHardban, enforceForeverban, restoreForeverban } = require("./moderation");
+const vouch = require("./vouch");
+const systems = require("./systems");
 let cleanupRunning = false;
 let recoveryRunning = false;
 const recoveryCursors = new Map();
@@ -34,13 +35,18 @@ const client = new Client({
     GatewayIntentBits.GuildMembers,
     GatewayIntentBits.GuildVoiceStates,
     GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent
+    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildModeration
   ],
   partials: [Partials.Channel, Partials.Message]
 });
 
+systems.bindClient(client);
+
 client.once("ready", async () => {
   console.log(`Logged in as ${client.user.tag}`);
+  startTempbanScheduler(client);
+  await vouch.reconcileAll(client);
   for (const guild of client.guilds.cache.values()) {
     try {
       await reconcileGuild(guild);
@@ -52,9 +58,11 @@ client.once("ready", async () => {
 });
 
 client.on("messageCreate", async (message) => {
-  if (!message.guild || message.author.bot || !message.content.startsWith(PREFIX)) return;
+  if (!message.guild || message.author.bot) return;
+  const prefix = vouch.getPrefix(message.guild.id);
+  if (!message.content.startsWith(prefix)) return;
   try {
-    await handleCommand(message, client, PREFIX);
+    await handleCommand(message, client, prefix);
   } catch (error) {
     console.error("[command]", error);
     await message.reply({
@@ -100,6 +108,7 @@ client.on("channelDelete", async (channel) => {
   try {
     const temp = db.getTempChannel(channel.id);
     if (temp) db.markTempDeleted(channel.id);
+    await vouch.handleChannelDelete(channel);
     const config = db.getConfig(channel.guild?.id);
     if (config && config.server_interface_enabled &&
         (config.server_interface_channel_id === channel.id ||
@@ -112,9 +121,43 @@ client.on("channelDelete", async (channel) => {
   }
 });
 
+client.on("guildMemberAdd", (member) => {
+  enforceForeverban(member).catch((error) => {
+    console.error(`[foreverban join] ${member.guild.id}:${member.id}`, error);
+  }).then(() => enforceHardban(member)).catch((error) => {
+    console.error(`[hardban join] ${member.guild.id}:${member.id}`, error);
+  }).then(() => vouch.handleGuildMemberAdd(member)).catch((error) => {
+    console.error(`[vouch join] ${member.guild.id}:${member.id}`, error);
+  });
+});
+
+client.on("guildMemberRemove", (member) => {
+  vouch.handleGuildMemberRemove(member);
+});
+
+client.on("guildMemberUpdate", (oldMember, newMember) => {
+  vouch.handleGuildMemberUpdate(oldMember, newMember).catch((error) => {
+    logThrottledError(`vouch-role:${newMember?.guild?.id}`, "[vouch roles]", error);
+  });
+});
+
+client.on("roleDelete", (role) => {
+  vouch.handleRoleDelete(role).catch((error) => {
+    console.error(`[vouch role delete] ${role?.id}`, error);
+  });
+});
+
+client.on("guildBanRemove", (ban) => {
+  restoreForeverban(ban).catch((error) => {
+    console.error(`[foreverban restore] ${ban.guild.id}:${ban.user.id}`, error);
+  });
+});
+
 client.on("interactionCreate", async (interaction) => {
   try {
     if (await handleSetupInteraction(interaction)) return;
+    if (await systems.handleInteraction(interaction)) return;
+    if (interaction.isStringSelectMenu?.() && await vouch.handleInteraction(interaction)) return;
     if (interaction.isButton()) {
       await handleButton(interaction);
     } else if (interaction.isUserSelectMenu()) {

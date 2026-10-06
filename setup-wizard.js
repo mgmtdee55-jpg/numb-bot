@@ -12,7 +12,7 @@ const {
   TextInputStyle
 } = require("discord.js");
 const db = require("./db");
-const { createServerInterface } = require("./voice");
+const { createServerInterface, MAX_TEMP_CATEGORIES } = require("./voice");
 
 const sessions = new Map();
 const SESSION_TIMEOUT = 10 * 60 * 1000;
@@ -25,7 +25,6 @@ const CLEANUP_OPTIONS = [
   [1800, "30 minutes"]
 ];
 const BITRATE_OPTIONS = [8000, 16000, 32000, 48000, 64000, 96000, 128000, 256000, 384000];
-const MAX_TEMP_CATEGORIES = 25;
 
 function configuredCategories(config) {
   let categories = [];
@@ -153,12 +152,14 @@ function wizardPayload(wizard) {
     );
   } else if (step === 1) {
     title = "VoiceMaster Setup · Category";
-    description = `Choose up to ${MAX_TEMP_CATEGORIES} existing categories for temporary voice channels.`;
+    description =
+      `Choose up to ${MAX_TEMP_CATEGORIES} overflow categories, in order. ` +
+      "New VCs fill the first until it reaches Discord's 50-channel cap (or 99 connected members), then use the next.";
     components.push(
       new ActionRowBuilder().addComponents(
         new ChannelSelectMenuBuilder()
           .setCustomId(`setup:${userId}:categories`)
-          .setPlaceholder("Select one or more categories")
+          .setPlaceholder("Select up to 3 overflow categories")
           .setChannelTypes(ChannelType.GuildCategory)
           .setMinValues(1)
           .setMaxValues(MAX_TEMP_CATEGORIES)
@@ -416,7 +417,9 @@ async function confirm(interaction, wizard) {
         guild_id: wizard.guild.id,
         j2c_channel_id: wizard.values.j2c_channel_id,
         category_id: wizard.values.category_ids[0] || wizard.values.category_id,
-        category_ids: JSON.stringify(wizard.values.category_ids),
+        category_ids: JSON.stringify(
+          [...new Set(wizard.values.category_ids || [])].slice(0, MAX_TEMP_CATEGORIES)
+        ),
         server_interface_channel_id: serverChannelId,
         server_interface_message_id: serverMessageId,
         name_template: wizard.values.name_template.trim(),
@@ -681,7 +684,7 @@ async function handleSetupInteraction(interaction) {
     if (action === "j2c") {
       wizard.values.j2c_channel_id = selected;
     } else if (action === "categories" || action === "category") {
-      wizard.values.category_ids = [...new Set(interaction.values)];
+      wizard.values.category_ids = [...new Set(interaction.values)].slice(0, MAX_TEMP_CATEGORIES);
       wizard.values.category_id = wizard.values.category_ids[0] || null;
     } else {
       await interaction.reply({ content: "That setup selection is not recognized.", flags: MessageFlags.Ephemeral });
