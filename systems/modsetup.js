@@ -158,7 +158,7 @@ function stepEmbed(guild, index) {
       ? (step.key === "logs" ? `Already set:\n${existing}` : step.key === "antinuke" ? `Already set: <#${existing}>` : `Already set: <@&${existing}>`)
       : "Nothing is set for this step yet."
   ];
-  return embed("Mod Setup", lines.join("\n"));
+  return embed("Mod Setup", lines.join("\n"), true);
 }
 
 async function open(message) {

@@ -47,7 +47,7 @@ function panelRow(selected = "overview") {
 
 function panelEmbed(prefix, section = "overview") {
   const body = pages(prefix);
-  return embed("Vouch", body[section] || body.overview);
+  return embed("Vouch", body[section] || body.overview, true);
 }
 
 function openPanel(message, prefix) {

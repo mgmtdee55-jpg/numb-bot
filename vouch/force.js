@@ -43,7 +43,7 @@ function panelEmbed(prefix, section = "overview") {
     block: `\`${prefix}forcerolestrip @user @role\`\nAlias: \`${prefix}forcestrip @user @role\`\n\nThe user cannot hold that role. If they already have it, it is removed.\n\n\`${prefix}unforcerolestrip @user\`\nAlias: \`${prefix}unforcestrip @user\``,
     strip: `\`${prefix}rolestrip @role\`\nAlias: \`${prefix}forcestrip @role\`\n\nRemoves the role from everyone who currently has it. If the role is the vouch role, those active vouches are closed.`
   };
-  return embed("Force Management", pages[section] || pages.overview);
+  return embed("Force Management", pages[section] || pages.overview, true);
 }
 
 async function openPanel(message, prefix) {

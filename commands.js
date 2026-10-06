@@ -7,9 +7,10 @@ const { consumeActionCooldown } = require("./action-cooldowns");
 const { logThrottledError } = require("./log-throttle");
 const moderation = require("./moderation");
 const vouch = require("./vouch");
+const { present, errorMark } = require("./feedback");
 
-function embed(title, description) {
-  return new EmbedBuilder().setColor(0x2b2d31).setTitle(title).setDescription(description);
+function embed(title, description, guild) {
+  return new EmbedBuilder().setColor(0x2b2d31).setTitle(title).setDescription(present(title, description, { guild }));
 }
 
 function ownerOnly(message) {
@@ -95,7 +96,7 @@ async function handleCommand(message, client, prefix = "-") {
         : message.member?.voice?.channel;
       const temp = channel && db.getTempChannel(channel.id);
       if (!channel || !temp) {
-        return message.reply("your not in a vc channel created by spanter buddy");
+        return message.reply(`${errorMark(message.guild)} your not in a vc channel created by spanter buddy`);
       }
       const remainingMs = consumeActionCooldown(message.author.id, channel.id, "interfaceRefresh");
       if (remainingMs) {

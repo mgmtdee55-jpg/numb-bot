@@ -137,7 +137,7 @@ async function sendLog(guild, category, description) {
   if (!channelId) return false;
   const channel = guild.channels.cache.get(channelId) || await guild.channels.fetch(channelId).catch(() => null);
   if (!channel || typeof channel.send !== "function") return false;
-  await channel.send({ embeds: [embed(CATEGORY_HELP[category] || category, description)] });
+  await channel.send({ embeds: [embed(CATEGORY_HELP[category] || category, description, true)] });
   return true;
 }
 

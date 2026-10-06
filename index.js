@@ -25,6 +25,8 @@ const { logThrottledError } = require("./log-throttle");
 const { startTempbanScheduler, enforceHardban, enforceForeverban, restoreForeverban } = require("./moderation");
 const vouch = require("./vouch");
 const systems = require("./systems");
+const afk = require("./afk");
+const { present } = require("./feedback");
 let cleanupRunning = false;
 let recoveryRunning = false;
 const recoveryCursors = new Map();
@@ -67,6 +69,11 @@ client.on("shardError", (error) => console.error("[discord shard]", error));
 client.on("messageCreate", async (message) => {
   if (!message.guild || message.author.bot) return;
   const prefix = vouch.getPrefix(message.guild.id);
+  try {
+    await afk.observe(message, prefix);
+  } catch (error) {
+    console.error("[afk]", error);
+  }
   if (!message.content.startsWith(prefix)) return;
   try {
     await handleCommand(message, client, prefix);
@@ -77,7 +84,7 @@ client.on("messageCreate", async (message) => {
         new EmbedBuilder()
           .setColor(0x2b2d31)
           .setTitle("Unable to complete")
-          .setDescription("The command could not be completed. Please check the bot's channel permissions.")
+          .setDescription(present("Unable to complete", "The command could not be completed. Please check the bot's channel permissions.", { guild: message.guild }))
       ]
     }).catch((replyError) => console.error("[command error reply]", replyError));
   }
@@ -177,7 +184,7 @@ client.on("interactionCreate", async (interaction) => {
           new EmbedBuilder()
             .setColor(0x2b2d31)
             .setTitle("Unavailable")
-            .setDescription("This interaction is not supported.")
+            .setDescription(present("Unavailable", "This interaction is not supported.", { guild: interaction.guild }))
         ],
         flags: MessageFlags.Ephemeral
       });
@@ -189,7 +196,7 @@ client.on("interactionCreate", async (interaction) => {
         new EmbedBuilder()
           .setColor(0x2b2d31)
           .setTitle("Unable to complete")
-          .setDescription("That action could not be completed. Check that the bot has the required channel permissions.")
+          .setDescription(present("Unable to complete", "That action could not be completed. Check that the bot has the required channel permissions.", { guild: interaction.guild }))
       ],
       flags: MessageFlags.Ephemeral
     };

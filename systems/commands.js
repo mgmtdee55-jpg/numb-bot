@@ -11,6 +11,7 @@ const logs = require("./logs");
 const voice = require("./voice");
 const channels = require("./channels");
 const modsetup = require("./modsetup");
+const afk = require("../afk");
 
 const RANK_COMMANDS = new Set(access.VOICE_COMMANDS);
 
@@ -404,7 +405,7 @@ async function showUser(message, member) {
 const VERIFICATION = ["None", "Low", "Medium", "High", "Very High"];
 
 function imageReply(message, title, url, missing) {
-  if (!url) return reply(message, title, missing);
+  if (!url) return reply(message, title, missing, "error");
   return message.reply({
     embeds: [new EmbedBuilder().setColor(ACCENT).setTitle(title).setImage(url).setDescription("")]
   });
@@ -483,6 +484,10 @@ async function restart(message) {
 
 async function handleCommand(message, args, prefix) {
   const name = commandName(args, prefix);
+  if (name === "afk") {
+    await afk.setAway(message, args.slice(1).join(" "));
+    return true;
+  }
   if (name === "showallcommands") {
     const pages = catalog.embeds(prefix);
     if (pages[0]?.setFooter) pages[0].setFooter({ text: access.rankLine(message.member) });

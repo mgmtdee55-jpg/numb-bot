@@ -12,6 +12,7 @@ const {
   TextInputStyle
 } = require("discord.js");
 const db = require("./db");
+const { present } = require("./feedback");
 const { createServerInterface, MAX_TEMP_CATEGORIES } = require("./voice");
 
 const sessions = new Map();
@@ -43,7 +44,7 @@ function sessionKey(guildId, userId) {
 }
 
 function embed(title, description) {
-  return new EmbedBuilder().setColor(0x2b2d31).setTitle(title).setDescription(description);
+  return new EmbedBuilder().setColor(0x2b2d31).setTitle(title).setDescription(present(title, description));
 }
 
 function buttonRow(userId, buttons) {

@@ -105,6 +105,7 @@ function botText(prefix) {
     `\`${p}alias add <shortcut> <command>\``,
     `\`${p}alias remove <shortcut>\``,
     `\`${p}alias list\``,
+    `\`${p}afk [status]\` — set an away status`,
     `\`${p}restart\` — Founders, Gods, and the server owner`,
     `\`${p}modsetup\` — Gods set vouch, voice ranks, and logs`
   ].join("\n");
@@ -322,7 +323,7 @@ function renderHelp(category, prefix, member) {
     `**Who can use this:** ${CATEGORY_ACCESS[category] || CATEGORY_ACCESS.overview}`,
     ""
   ].join("\n");
-  return embed(page.title, `${header}\n${body}`);
+  return embed(page.title, `${header}\n${body}`, true);
 }
 
 function helpOptions(selected, withEmoji) {

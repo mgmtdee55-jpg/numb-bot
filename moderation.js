@@ -13,6 +13,7 @@ const {
   permissionHelpText
 } = require("./fake-permissions");
 const access = require("./systems/access");
+const { present } = require("./feedback");
 
 const ACCENT = 0x2b2d31;
 const tempbanTimers = new Map();
@@ -21,12 +22,12 @@ const allowedForeverUnbans = new Set();
 const FOREVERBAN_REASON_PREFIX = "FOREVERBAN";
 const ALT_ACCOUNT_AGE_MS = 30 * 86_400_000;
 
-function embed(title, description) {
-  return new EmbedBuilder().setColor(ACCENT).setTitle(title).setDescription(description);
+function embed(title, description, guild) {
+  return new EmbedBuilder().setColor(ACCENT).setTitle(title).setDescription(present(title, description, { guild }));
 }
 
 function reply(message, title, description) {
-  return message.reply({ embeds: [embed(title, description)] });
+  return message.reply({ embeds: [embed(title, description, message.guild)] });
 }
 
 function missingPerm(message, permission) {
@@ -709,7 +710,8 @@ async function handleUnbanAll(message, args) {
   return message.reply({
     embeds: [embed(
       task.cancelled ? "Mass Unban Cancelled" : "Mass Unban Finished",
-      `Unbanned **${unbanned}**. Skipped **${skipped}**.`
+      `Unbanned **${unbanned}**. Skipped **${skipped}**.`,
+      message.guild
     )]
   });
 }

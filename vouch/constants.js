@@ -44,7 +44,7 @@ const BUILTIN_COMMANDS = new Set([
   "ceo", "founder", "boss", "hide", "unhide", "lockall", "unlockall", "nuke",
   "forceownership", "voiceoverride", "dragall", "voicehistory", "godmode", "ungodmode",
   "muteall", "unmuteall", "shield", "unshield", "follow", "unfollow", "chain", "bring",
-  "inspect", "forceclaim", "stfu", "unstfu", "stsu", "unstsu", "modsetup", "voice", "rankinfo", "unrank"
+  "inspect", "forceclaim", "stfu", "unstfu", "stsu", "unstsu", "modsetup", "voice", "rankinfo", "unrank", "afk"
 ]);
 
 const RANK = { user: 0, giver: 1, admin: 2, os: 3, owner: 4 };

@@ -13,9 +13,10 @@ const { renderVoiceChannelInterface } = require("./voice");
 const { consumeActionCooldown } = require("./action-cooldowns");
 const access = require("./systems/access");
 const { logThrottledError } = require("./log-throttle");
+const { present } = require("./feedback");
 
-function result(title, description) {
-  return { embeds: [new EmbedBuilder().setColor(0x2b2d31).setTitle(title).setDescription(description)] };
+function result(title, description, guild) {
+  return { embeds: [new EmbedBuilder().setColor(0x2b2d31).setTitle(title).setDescription(present(title, description, { guild }))] };
 }
 
 function privateResult(title, description) {

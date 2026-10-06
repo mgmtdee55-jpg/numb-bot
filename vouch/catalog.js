@@ -37,7 +37,7 @@ const WHO = {
   "m add": "Gods+", "m take": "Gods+", "m list": "Gods+",
   forcemanage: "Founder+", forcenickname: "Founder+", unforcenickname: "Founder+",
   forcerolestrip: "Founder+", unforcerolestrip: "Founder+", rolestrip: "Founder+",
-  help: "Everyone", showallcommands: "Everyone", setprefix: "Founder+",
+  help: "Everyone", showallcommands: "Everyone", afk: "Everyone", setprefix: "Founder+",
   "alias add": "Founder+", "alias remove": "Founder+", "alias list": "Founder+", restart: "Founder+",
   modsetup: "Gods+"
 };
@@ -211,7 +211,8 @@ function categories(prefix) {
       ["alias add", "add a shortcut"],
       ["alias remove", "remove a shortcut"],
       ["alias list", "list shortcuts"],
-      ["restart", "restart the bot"]
+      ["restart", "restart the bot"],
+      ["afk", "set an away status"]
     ])]
   ].map(([name, value]) => ({ name, value }));
 }
