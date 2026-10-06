@@ -650,6 +650,37 @@ test("cleanup preserves occupied and delayed empty VCs and records deleted histo
   assert.equal(delayed.deleted, false);
   assert.equal(instant.deleted, true);
   assert.equal(persistentInterface.deleted, false);
+
+  const uncachedGuild = makeGuild("uncached-occupant-guild");
+  db.setConfig({
+    guild_id: uncachedGuild.id,
+    j2c_channel_id: "uncached-j2c",
+    category_id: "uncached-category",
+    server_interface_channel_id: "uncached-interface",
+    server_interface_message_id: "uncached-message",
+    name_template: "{nickname}'s Channel",
+    user_limit: 0,
+    bitrate: 64000,
+    cleanup_seconds: 0,
+    server_interface_enabled: 0
+  });
+  const uncached = makeVoiceChannel(uncachedGuild, "uncached-occupied-channel");
+  uncachedGuild.voiceStates.cache.set("voice-state-uncached", {
+    id: "999999999999999999",
+    channelId: uncached.id,
+    member: null
+  });
+  db.addTemp({
+    channel_id: uncached.id,
+    guild_id: uncachedGuild.id,
+    owner_id: "999999999999999999",
+    interface_message_id: null,
+    created_at: Date.now()
+  });
+  db.setEmptySince(uncached.id, Date.now() - 120000);
+  await voice.cleanupEmptyTempChannels(uncachedGuild);
+  assert.equal(uncached.deleted, false);
+  assert.equal(db.getTempChannel(uncached.id).owner_id, "999999999999999999");
   assert.equal(db.getTempChannel(instant.id), undefined);
   const history = new BetterSqlite3(databasePath, { readonly: true });
   assert.ok(history.prepare("SELECT deleted_at FROM temp_channels WHERE channel_id = ?").get(instant.id).deleted_at);

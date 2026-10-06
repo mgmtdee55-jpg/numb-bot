@@ -42,6 +42,7 @@ const STAFF = [
 
 const LOG_CATEGORIES = ["message", "voice", "channel", "role", "server", "member"];
 const ANTINUKE_LOG = "antinuke";
+const PUNISHMENT_LOG = "punishments";
 
 const REQUIREMENT = {
   forceownership: "Gods and Founders",
@@ -247,6 +248,7 @@ module.exports = {
   STAFF,
   LOG_CATEGORIES,
   ANTINUKE_LOG,
+  PUNISHMENT_LOG,
   VOICE_COMMANDS,
   isBotOwner,
   isServerOwner,

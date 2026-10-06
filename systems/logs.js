@@ -11,7 +11,8 @@ const CATEGORY_HELP = {
   role: "Role create, delete and update",
   server: "Server/guild changes",
   member: "Member joins, leaves, updates, bans and unbans",
-  antinuke: "Anti-Nuke and vouch commands"
+  antinuke: "Anti-Nuke and vouch commands",
+  punishments: "Kicks, bans, and timeouts"
 };
 
 function bindAntinukeLog(guildId, channelId) {
@@ -52,12 +53,16 @@ function viewText(guildId) {
     return `**${category}** — ${CATEGORY_HELP[category]}\n${where}`;
   }).join("\n\n");
   const antinukeId = configured.get(access.ANTINUKE_LOG);
+  const punishmentId = configured.get(access.PUNISHMENT_LOG);
   return [
     events,
     "",
     `**antinuke** — ${CATEGORY_HELP.antinuke}`,
     antinukeId ? `<#${antinukeId}>` : "not set",
-    "This channel is separate. `-logging set all` does not change it."
+    "",
+    `**punishments** — ${CATEGORY_HELP.punishments}`,
+    punishmentId ? `<#${punishmentId}>` : "not set",
+    "Anti-Nuke and punishment channels are separate. `-logging set all` does not change them."
   ].join("\n");
 }
 
@@ -74,8 +79,11 @@ async function handleLogging(message, args, prefix) {
       "",
       access.LOG_CATEGORIES.map((category) => `**${category}** — ${CATEGORY_HELP[category]}`).join("\n"),
       `**antinuke** — ${CATEGORY_HELP.antinuke}`,
+      `**punishments** — ${CATEGORY_HELP.punishments}`,
       "",
-      `\`${prefix}logging set antinuke [#channel]\` sets the Anti-Nuke and vouch log. \`all\` does not include it.`,
+      `\`${prefix}logging set antinuke [#channel]\` sets the Anti-Nuke and vouch log.`,
+      `\`${prefix}logging set punishments [#channel]\` sets the kick, ban, and timeout log.`,
+      `\`all\` does not include either channel.`,
       `Alias: \`${prefix}logs\``
     ].join("\n"));
   }
@@ -86,14 +94,18 @@ async function handleLogging(message, args, prefix) {
     if (!usable(channel)) return reply(message, "Missing Channel", "Mention a text channel, or run this in the channel you want to use.");
     if (category === "all") {
       for (const name of access.LOG_CATEGORIES) store.setLog(message.guild.id, name, channel.id);
-      return reply(message, "Logs Updated", `Event logs will go to <#${channel.id}>. Anti-Nuke and vouch logs were left alone.`);
+      return reply(message, "Logs Updated", `Event logs will go to <#${channel.id}>. Anti-Nuke, vouch, and punishment logs were left alone.`);
     }
     if (category === access.ANTINUKE_LOG) {
       bindAntinukeLog(message.guild.id, channel.id);
       return reply(message, "Logs Updated", `Anti-Nuke and vouch logs will go to <#${channel.id}>.`);
     }
+    if (category === access.PUNISHMENT_LOG) {
+      store.setLog(message.guild.id, access.PUNISHMENT_LOG, channel.id);
+      return reply(message, "Logs Updated", `Kick, ban, and timeout logs will go to <#${channel.id}>.`);
+    }
     if (!access.LOG_CATEGORIES.includes(category)) {
-      return reply(message, "Unknown Category", `Use one of: ${access.LOG_CATEGORIES.join(", ")}, \`antinuke\`, or \`all\`.`);
+      return reply(message, "Unknown Category", `Use one of: ${access.LOG_CATEGORIES.join(", ")}, \`antinuke\`, \`punishments\`, or \`all\`.`);
     }
     store.setLog(message.guild.id, category, channel.id);
     return reply(message, "Logs Updated", `**${category}** logs will go to <#${channel.id}>.`);
@@ -105,7 +117,13 @@ async function handleLogging(message, args, prefix) {
       for (const name of access.LOG_CATEGORIES) {
         if (store.removeLog(message.guild.id, name)) removed += 1;
       }
-      return reply(message, "Logs Cleared", `Removed **${removed}** event log setting(s). The Anti-Nuke log was kept.`);
+      return reply(message, "Logs Cleared", `Removed **${removed}** event log setting(s). The Anti-Nuke and punishment logs were kept.`);
+    }
+    if (category === access.PUNISHMENT_LOG) {
+      if (!store.removeLog(message.guild.id, access.PUNISHMENT_LOG)) {
+        return reply(message, "Not Configured", "Kicks, bans, and timeouts do not have a log channel.");
+      }
+      return reply(message, "Logs Updated", "Kicks, bans, and timeouts will no longer send a log.");
     }
     if (category === access.ANTINUKE_LOG) {
       if (!store.getLog(message.guild.id, access.ANTINUKE_LOG) && !vouchStore.getConfig(message.guild.id).log_channel_id) {
@@ -115,15 +133,15 @@ async function handleLogging(message, args, prefix) {
       return reply(message, "Logs Updated", "Anti-Nuke and vouch commands will no longer send a log.");
     }
     if (!access.LOG_CATEGORIES.includes(category)) {
-      return reply(message, "Unknown Category", `Use one of: ${access.LOG_CATEGORIES.join(", ")}, \`antinuke\`, or \`all\`.`);
+      return reply(message, "Unknown Category", `Use one of: ${access.LOG_CATEGORIES.join(", ")}, \`antinuke\`, \`punishments\`, or \`all\`.`);
     }
     if (!store.removeLog(message.guild.id, category)) return reply(message, "Not Configured", `**${category}** does not have a log channel.`);
     return reply(message, "Logs Updated", `**${category}** will no longer send a log.`);
   }
   if (sub === "test") {
     const category = (args[2] || "").toLowerCase();
-    if (category !== access.ANTINUKE_LOG && !access.LOG_CATEGORIES.includes(category)) {
-      return reply(message, "Unknown Category", `Use one of: ${access.LOG_CATEGORIES.join(", ")}, or \`antinuke\`.`);
+    if (category !== access.ANTINUKE_LOG && category !== access.PUNISHMENT_LOG && !access.LOG_CATEGORIES.includes(category)) {
+      return reply(message, "Unknown Category", `Use one of: ${access.LOG_CATEGORIES.join(", ")}, \`antinuke\`, or \`punishments\`.`);
     }
     const sent = await sendLog(message.guild, category, `Test log from <@${message.author.id}>.`);
     if (!sent) return reply(message, "No Log Channel", `Set one with \`${prefix}logging set ${category}\`.`);
@@ -132,12 +150,12 @@ async function handleLogging(message, args, prefix) {
   return reply(message, "Event Logging", `Use \`${prefix}logging help\`.`);
 }
 
-async function sendLog(guild, category, description) {
+async function sendLog(guild, category, description, title) {
   const channelId = store.getLog(guild.id, category);
   if (!channelId) return false;
   const channel = guild.channels.cache.get(channelId) || await guild.channels.fetch(channelId).catch(() => null);
   if (!channel || typeof channel.send !== "function") return false;
-  await channel.send({ embeds: [embed(CATEGORY_HELP[category] || category, description, true)] });
+  await channel.send({ embeds: [embed(title || CATEGORY_HELP[category] || category, description, true)] });
   return true;
 }
 

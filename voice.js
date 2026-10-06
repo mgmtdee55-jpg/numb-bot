@@ -33,6 +33,20 @@ const VC_INTERFACE_ICONS = {
   limit: "1473734316331765857"
 };
 
+function channelHasOccupant(channel, userId = null) {
+  const states = channel?.guild?.voiceStates?.cache;
+  if (typeof states?.values === "function") {
+    for (const state of states.values()) {
+      if (state?.channelId !== channel.id) continue;
+      if (!userId) return true;
+      const stateUserId = state.id || state.userId || state.member?.id;
+      if (stateUserId && String(stateUserId) === String(userId)) return true;
+    }
+  }
+  if (userId) return Boolean(channel?.members?.has?.(userId));
+  return (channel?.members?.size || 0) > 0;
+}
+
 async function findBotMessage(channel, title) {
   const botId = channel.client?.user?.id || channel.guild.members.me?.id;
   if (!botId) return null;
@@ -306,7 +320,7 @@ async function createTempChannelInCategory(guild, member, config, categoryId) {
     });
     return channel;
   } catch (error) {
-    if (channel.members.size === 0) {
+    if (!channelHasOccupant(channel)) {
       await channel.delete("VoiceMaster: failed to finish temporary channel setup").catch((deleteError) => {
         console.error(`[temp channel rollback] ${channel.id}`, deleteError);
       });
@@ -450,16 +464,16 @@ async function cleanupTempChannelUnlocked(guild, row, config = db.getConfig(guil
       db.markTempDeleted(row.channel_id);
       return;
     }
-    if (channel.members.size > 0) {
+    if (channelHasOccupant(channel)) {
       if (row.empty_since !== null) db.setEmptySince(row.channel_id, null);
-      if (row.owner_id && !channel.members.has(row.owner_id)) db.clearOwner(row.channel_id, row.owner_id);
+      if (row.owner_id && !channelHasOccupant(channel, row.owner_id)) db.clearOwner(row.channel_id, row.owner_id);
       return;
     }
 
     const emptySince = row.empty_since ?? Date.now();
     if (row.empty_since === null) db.setEmptySince(row.channel_id, emptySince);
     const cleanupMs = Math.max(0, config?.cleanup_seconds ?? 0) * 1000;
-    if (Date.now() - emptySince < cleanupMs || channel.members.size > 0) return;
+    if (Date.now() - emptySince < cleanupMs || channelHasOccupant(channel)) return;
 
     await channel.delete("VoiceMaster: empty temporary channel cleanup");
     db.markTempDeleted(row.channel_id);
@@ -525,10 +539,10 @@ async function reconcileGuild(guild, { tempBatchSize = Infinity, cursor = 0 } = 
             db.markTempDeleted(row.channel_id);
             return;
           }
-          if (row.owner_id && !channel.members.has(row.owner_id)) db.clearOwner(row.channel_id, row.owner_id);
-          if (channel.members.size === 0 && row.empty_since === null) {
+          if (row.owner_id && !channelHasOccupant(channel, row.owner_id)) db.clearOwner(row.channel_id, row.owner_id);
+          if (!channelHasOccupant(channel) && row.empty_since === null) {
             db.setEmptySince(row.channel_id, Date.now());
-          } else if (channel.members.size > 0 && row.empty_since !== null) {
+          } else if (channelHasOccupant(channel) && row.empty_since !== null) {
             db.setEmptySince(row.channel_id, null);
           }
           let interfaceMissing = !row.interface_message_id;

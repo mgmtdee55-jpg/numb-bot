@@ -1,5 +1,6 @@
 const logs = require("./logs");
 const voice = require("./voice");
+const punishments = require("./punishments");
 
 function bindClient(client) {
   client.on("voiceStateUpdate", (before, after) => {
@@ -54,12 +55,22 @@ function bindClient(client) {
   });
   client.on("guildMemberRemove", (member) => {
     logs.sendLog(member.guild, "member", `<@${member.id}> left.`).catch(() => null);
+    punishments.logKick(member.guild, member.id).catch((error) => console.error("[punishment log]", error));
   });
   client.on("guildMemberUpdate", (before, after) => {
-    if (before.nickname === after.nickname) return;
-    logs.sendLog(after.guild, "member", `<@${after.id}> nickname changed.`).catch(() => null);
+    if (before.nickname !== after.nickname) {
+      logs.sendLog(after.guild, "member", `<@${after.id}> nickname changed.`).catch(() => null);
+    }
+    const beforeUntil = before.communicationDisabledUntilTimestamp || 0;
+    const afterUntil = after.communicationDisabledUntilTimestamp || 0;
+    if (beforeUntil === afterUntil) return;
+    const cleared = afterUntil <= Date.now();
+    punishments.logTimeout(after.guild, after.id, afterUntil, cleared).catch((error) => console.error("[punishment log]", error));
   });
-  client.on("guildBanAdd", (ban) => logs.sendLog(ban.guild, "member", `<@${ban.user.id}> was banned.`).catch(() => null));
+  client.on("guildBanAdd", (ban) => {
+    logs.sendLog(ban.guild, "member", `<@${ban.user.id}> was banned.`).catch(() => null);
+    punishments.logBan(ban.guild, ban.user.id).catch((error) => console.error("[punishment log]", error));
+  });
   client.on("guildBanRemove", (ban) => logs.sendLog(ban.guild, "member", `<@${ban.user.id}> was unbanned.`).catch(() => null));
 }
 

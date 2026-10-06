@@ -482,12 +482,97 @@ test("event logs can be set, tested, and removed", async () => {
   assert.equal(titleOf(antinuke), "Logs Updated");
   assert.equal(store.getLog(guild.id, "antinuke"), logChannel.id);
 
+  const punishments = await run(guild, owner, `-logging set punishments ${logChannel.id}`);
+  assert.equal(titleOf(punishments), "Logs Updated");
+  assert.equal(store.getLog(guild.id, "punishments"), logChannel.id);
+
   const all = await run(guild, owner, `-logging set all ${logChannel.id}`);
-  assert.match(textOf(all), /Anti-Nuke and vouch logs were left alone/);
+  assert.match(textOf(all), /punishment logs were left alone/);
   assert.equal(store.getLog(guild.id, "antinuke"), logChannel.id);
+  assert.equal(store.getLog(guild.id, "punishments"), logChannel.id);
 
   const cleared = await run(guild, owner, "-logging remove all");
   assert.equal(titleOf(cleared), "Logs Cleared");
   assert.equal(store.getLog(guild.id, "message"), null);
   assert.equal(store.getLog(guild.id, "antinuke"), logChannel.id);
+  assert.equal(store.getLog(guild.id, "punishments"), logChannel.id);
+});
+
+test("punishment log records who acted, the reason, and when", async () => {
+  const guild = makeGuild();
+  const owner = makeMember(guild, OWNER);
+  const sent = [];
+  const logChannel = {
+    id: "555000000000000077",
+    type: ChannelType.GuildText,
+    send: async (payload) => {
+      sent.push(payload);
+      return payload;
+    }
+  };
+  guild.channels.cache.set(logChannel.id, logChannel);
+  store.setLog(guild.id, "punishments", logChannel.id);
+  const when = Date.now();
+  db.addBanHistory({
+    guild_id: guild.id,
+    user_id: TARGET,
+    action: "ban",
+    reason: "spam links",
+    moderator_id: owner.id,
+    created_at: when
+  });
+  guild.fetchAuditLogs = async () => ({
+    entries: new Map([["1", { targetId: TARGET, executorId: BOT, reason: "bot reason", createdTimestamp: when }]])
+  });
+  const { logBan, logKick, logTimeout } = require("../systems/punishments");
+  await logBan(guild, TARGET, { wait: 0 });
+  assert.equal(sent[0].embeds[0].data.title, "Ban");
+  assert.match(sent[0].embeds[0].data.description, new RegExp(owner.id));
+  assert.match(sent[0].embeds[0].data.description, /spam links/);
+  assert.match(sent[0].embeds[0].data.description, /<t:\d+:F>/);
+
+  sent.length = 0;
+  guild.fetchAuditLogs = async () => ({ entries: new Map() });
+  await logKick(guild, TARGET, { wait: 0 });
+  assert.equal(sent.length, 0);
+
+  guild.fetchAuditLogs = async () => ({
+    entries: new Map([["2", {
+      targetId: TARGET,
+      executorId: owner.id,
+      reason: "arguing",
+      createdTimestamp: when,
+      changes: [{ key: "communication_disabled_until" }]
+    }]])
+  });
+  await logTimeout(guild, TARGET, when + 3600000, false, { wait: 0 });
+  assert.equal(sent[0].embeds[0].data.title, "Timeout");
+  assert.match(sent[0].embeds[0].data.description, /arguing/);
+  assert.match(sent[0].embeds[0].data.description, new RegExp(owner.id));
+  assert.match(sent[0].embeds[0].data.description, /\*\*Until:\*\*/);
+});
+
+test("mod setup saves the kick, ban, and timeout channel", async () => {
+  const modsetup = require("../systems/modsetup");
+  const guild = makeGuild();
+  const owner = makeMember(guild, OWNER);
+  const interaction = {
+    customId: "spanter:modsetup:channel:punishments",
+    values: ["555000000000000088"],
+    member: owner,
+    user: owner.user,
+    guild,
+    channelId: "555000000000000001",
+    replied: false,
+    deferred: false,
+    async update(payload) {
+      this.updated = payload;
+    },
+    async reply(payload) {
+      this.repliedPayload = payload;
+    }
+  };
+  assert.equal(await modsetup.handleInteraction(interaction), true);
+  assert.equal(store.getLog(guild.id, "punishments"), "555000000000000088");
+  assert.equal(embedTitle(interaction.updated.embeds[0]), "Mod Setup Complete");
 });

@@ -3,6 +3,7 @@ const store = require("./store");
 const access = require("./access");
 const vouchStore = require("../vouch/store");
 const { bindAntinukeLog } = require("./logs");
+const { ANTINUKE_LOG, LOG_CATEGORIES, PUNISHMENT_LOG } = access;
 const { reply, embed } = require("../vouch/ui");
 
 const STEPS = [
@@ -11,7 +12,8 @@ const STEPS = [
   { key: "premium", label: "Voice Premium", createName: "Voice Premium" },
   { key: "plus", label: "Voice Plus", createName: "Voice Plus" },
   { key: "logs", label: "Event log channels", createName: "Spanter Logs" },
-  { key: "antinuke", label: "Anti-Nuke and vouch log", createName: "antinuke-logs" }
+  { key: "antinuke", label: "Anti-Nuke and vouch log", createName: "antinuke-logs" },
+  { key: "punishments", label: "Kick, ban, and timeout log", createName: "punishment-logs" }
 ];
 
 function sessionKey(guildId, userId) {
@@ -64,13 +66,16 @@ async function createLogChannels(guild) {
   return count;
 }
 
-async function createAntinukeLog(guild) {
+function logCategory(guild) {
+  return [...guild.channels.cache.values()].find((channel) => channel.name === "Spanter Logs" && channel.type === ChannelType.GuildCategory);
+}
+
+async function createNamedLog(guild, name) {
   if (typeof guild.channels?.create !== "function") return null;
-  const parent = [...guild.channels.cache.values()].find((channel) => channel.name === "Spanter Logs" && channel.type === ChannelType.GuildCategory);
   return guild.channels.create({
-    name: "antinuke-logs",
+    name,
     type: ChannelType.GuildText,
-    parent: parent?.id,
+    parent: logCategory(guild)?.id,
     reason: "Mod setup"
   });
 }
@@ -83,9 +88,13 @@ function roleOptions(guild) {
     .map((role) => ({ label: role.name.slice(0, 100), value: role.id }));
 }
 
+function eventLogs(guildId) {
+  return store.listLogs(guildId).filter((row) => LOG_CATEGORIES.includes(row.category));
+}
+
 function componentsFor(step, guild) {
   const rows = [];
-  if (step.key !== "logs" && step.key !== "antinuke") {
+  if (!["logs", "antinuke", "punishments"].includes(step.key)) {
     const options = roleOptions(guild);
     if (options.length) {
       rows.push(new ActionRowBuilder().addComponents(
@@ -96,18 +105,25 @@ function componentsFor(step, guild) {
       ));
     }
   }
-  if (step.key === "antinuke") {
+  if (step.key === "antinuke" || step.key === "punishments") {
     rows.push(new ActionRowBuilder().addComponents(
       new ChannelSelectMenuBuilder()
-        .setCustomId("spanter:modsetup:channel:antinuke")
-        .setPlaceholder("Choose the Anti-Nuke log channel")
+        .setCustomId(`spanter:modsetup:channel:${step.key}`)
+        .setPlaceholder(step.key === "antinuke" ? "Choose the Anti-Nuke log channel" : "Choose the punishment log channel")
         .setChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
     ));
   }
+  const createLabel = step.key === "logs"
+    ? "Create event logs"
+    : step.key === "antinuke"
+      ? "Create antinuke-logs"
+      : step.key === "punishments"
+        ? "Create punishment-logs"
+        : "Create for me";
   const buttons = [
     new ButtonBuilder()
       .setCustomId(`spanter:modsetup:create:${step.key}`)
-      .setLabel(step.key === "logs" ? "Create event logs" : step.key === "antinuke" ? "Create antinuke-logs" : "Create for me")
+      .setLabel(createLabel)
       .setStyle(ButtonStyle.Primary)
   ];
   if (step.key === "logs") {
@@ -116,17 +132,19 @@ function componentsFor(step, guild) {
       .setLabel("Use this channel for event logs")
       .setStyle(ButtonStyle.Secondary));
   }
-  if (step.key === "antinuke") {
+  if (step.key === "antinuke" || step.key === "punishments") {
     buttons.push(new ButtonBuilder()
-      .setCustomId("spanter:modsetup:here:antinuke")
+      .setCustomId(`spanter:modsetup:here:${step.key}`)
       .setLabel("Use this channel")
       .setStyle(ButtonStyle.Secondary));
   }
   const existing = step.key === "logs"
-    ? store.listLogs(guild.id).some((row) => row.category !== access.ANTINUKE_LOG)
+    ? eventLogs(guild.id).length > 0
     : step.key === "antinuke"
-      ? store.getLog(guild.id, access.ANTINUKE_LOG) || vouchStore.getConfig(guild.id).log_channel_id
-      : currentRoleId(guild.id, step.key);
+      ? store.getLog(guild.id, ANTINUKE_LOG) || vouchStore.getConfig(guild.id).log_channel_id
+      : step.key === "punishments"
+        ? store.getLog(guild.id, PUNISHMENT_LOG)
+        : currentRoleId(guild.id, step.key);
   if (existing) {
     buttons.push(new ButtonBuilder()
       .setCustomId(`spanter:modsetup:keep:${step.key}`)
@@ -139,23 +157,28 @@ function componentsFor(step, guild) {
 
 function stepEmbed(guild, index) {
   const step = STEPS[index];
-  const antinukeId = store.getLog(guild.id, access.ANTINUKE_LOG) || vouchStore.getConfig(guild.id).log_channel_id;
+  const antinukeId = store.getLog(guild.id, ANTINUKE_LOG) || vouchStore.getConfig(guild.id).log_channel_id;
+  const punishmentId = store.getLog(guild.id, PUNISHMENT_LOG);
   const existing = step.key === "logs"
-    ? store.listLogs(guild.id).filter((row) => row.category !== access.ANTINUKE_LOG).map((row) => `**${row.category}** <#${row.channel_id}>`).join("\n")
+    ? eventLogs(guild.id).map((row) => `**${row.category}** <#${row.channel_id}>`).join("\n")
     : step.key === "antinuke"
       ? antinukeId
-      : currentRoleId(guild.id, step.key);
+      : step.key === "punishments"
+        ? punishmentId
+        : currentRoleId(guild.id, step.key);
   const lines = [
     `Step **${index + 1}** of **${STEPS.length}**: **${step.label}**`,
     "",
     step.key === "logs"
-      ? "These are message, voice, channel, role, server, and member logs. Anti-Nuke and vouch logs are the next step."
+      ? "These are message, voice, channel, role, server, and member logs. Anti-Nuke and the punishment log are separate steps."
       : step.key === "antinuke"
         ? "Vouch, Anti-Nuke admin, staff rank, and role-limit actions use this channel only."
-        : `Mention is not required. Choose an existing role, or I will create **${step.createName}**.`,
+        : step.key === "punishments"
+          ? "Kicks, bans, and timeouts are posted here with the moderator, the reason, and the time. Event logs and Anti-Nuke stay in their own channels."
+          : `Mention is not required. Choose an existing role, or I will create **${step.createName}**.`,
     "",
     existing
-      ? (step.key === "logs" ? `Already set:\n${existing}` : step.key === "antinuke" ? `Already set: <#${existing}>` : `Already set: <@&${existing}>`)
+      ? (step.key === "logs" ? `Already set:\n${existing}` : step.key === "punishments" || step.key === "antinuke" ? `Already set: <#${existing}>` : `Already set: <@&${existing}>`)
       : "Nothing is set for this step yet."
   ];
   return embed("Mod Setup", lines.join("\n"), true);
@@ -174,7 +197,7 @@ async function advance(interaction, index) {
   if (next >= STEPS.length) {
     sessions.delete(sessionKey(interaction.guild.id, interaction.user.id));
     return interaction.update({
-      embeds: [embed("Mod Setup Complete", "Vouch, voice ranks, event logs, and the Anti-Nuke log are set. You can rerun `-modsetup` to change them.")],
+      embeds: [embed("Mod Setup Complete", "Vouch, voice ranks, event logs, the Anti-Nuke log, and the kick, ban, and timeout log are set. You can rerun `-modsetup` to change them.")],
       components: []
     });
   }
@@ -205,13 +228,14 @@ async function handleInteraction(interaction) {
         return true;
       }
       saveRole(interaction.guild.id, step.key, role.id);
-    } else if (action === "channel" && step.key === "antinuke") {
+    } else if (action === "channel" && (step.key === "antinuke" || step.key === "punishments")) {
       const channelId = interaction.values?.[0];
       if (!channelId) {
-        await interaction.reply({ embeds: [embed("Missing Channel", "Choose a text channel for Anti-Nuke and vouch logs.")], flags: MessageFlags.Ephemeral });
+        await interaction.reply({ embeds: [embed("Missing Channel", "Choose a text channel.")], flags: MessageFlags.Ephemeral });
         return true;
       }
-      bindAntinukeLog(interaction.guild.id, channelId);
+      if (step.key === "antinuke") bindAntinukeLog(interaction.guild.id, channelId);
+      else store.setLog(interaction.guild.id, PUNISHMENT_LOG, channelId);
     } else if (action === "create") {
       if (step.key === "logs") {
         const count = await createLogChannels(interaction.guild);
@@ -219,13 +243,14 @@ async function handleInteraction(interaction) {
           await interaction.reply({ embeds: [embed("Cannot Create Channels", "I could not create log channels. Check Manage Channels.")], flags: MessageFlags.Ephemeral });
           return true;
         }
-      } else if (step.key === "antinuke") {
-        const channel = await createAntinukeLog(interaction.guild);
+      } else if (step.key === "antinuke" || step.key === "punishments") {
+        const channel = await createNamedLog(interaction.guild, step.createName);
         if (!channel) {
-          await interaction.reply({ embeds: [embed("Cannot Create Channels", "I could not create #antinuke-logs. Check Manage Channels.")], flags: MessageFlags.Ephemeral });
+          await interaction.reply({ embeds: [embed("Cannot Create Channels", `I could not create #${step.createName}. Check Manage Channels.`)], flags: MessageFlags.Ephemeral });
           return true;
         }
-        bindAntinukeLog(interaction.guild.id, channel.id);
+        if (step.key === "antinuke") bindAntinukeLog(interaction.guild.id, channel.id);
+        else store.setLog(interaction.guild.id, PUNISHMENT_LOG, channel.id);
       } else {
         const role = await createNamedRole(interaction.guild, step.createName);
         if (!role) {
@@ -236,8 +261,10 @@ async function handleInteraction(interaction) {
       }
     } else if (action === "here" && step.key === "antinuke") {
       bindAntinukeLog(interaction.guild.id, interaction.channelId);
+    } else if (action === "here" && step.key === "punishments") {
+      store.setLog(interaction.guild.id, PUNISHMENT_LOG, interaction.channelId);
     } else if (action === "here") {
-      for (const category of access.LOG_CATEGORIES) store.setLog(interaction.guild.id, category, interaction.channelId);
+      for (const category of LOG_CATEGORIES) store.setLog(interaction.guild.id, category, interaction.channelId);
     }
     await advance(interaction, Math.max(0, index));
   } catch (error) {
