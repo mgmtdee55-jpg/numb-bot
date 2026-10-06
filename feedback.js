@@ -50,21 +50,42 @@ function findEmoji(guild, id) {
     || null;
 }
 
+const APP_EMOJIS = [
+  [CONFIRM_ID, "confirm"],
+  [ERROR_ID, "error"]
+];
+
+async function registerApplicationEmojis(client) {
+  if (!client.application?.emojis?.fetch || !client.application?.emojis?.create) return;
+  await client.application.fetch?.();
+  const emojis = await client.application.emojis.fetch();
+  const owned = [...emojis.values()];
+  for (const [sourceId, name] of APP_EMOJIS) {
+    try {
+      let emoji = owned.find((entry) => entry.name === name);
+      if (!emoji) {
+        const response = await fetch(`https://cdn.discordapp.com/emojis/${sourceId}.png?size=128&quality=lossless`);
+        if (!response.ok) throw new Error(`image download returned ${response.status}`);
+        const image = `data:image/png;base64,${Buffer.from(await response.arrayBuffer()).toString("base64")}`;
+        emoji = await client.application.emojis.create({ attachment: image, name });
+        owned.push(emoji);
+      }
+      knownEmojis.set(sourceId, emoji.toString());
+    } catch (error) {
+      console.error(`[emojis] could not register ${name}: ${error?.message || error}`);
+    }
+  }
+}
+
 async function loadEmojis(client) {
   loadingEmojis = (async () => {
     for (const guild of client.guilds?.cache?.values?.() || []) {
       const emojis = await guild.emojis?.fetch?.().catch(() => guild.emojis?.cache);
-      emojis?.forEach?.(storeEmoji);
-    }
-    try {
-      await client.application?.fetch?.();
-      const emojis = await client.application?.emojis?.fetch?.();
       emojis?.forEach?.((emoji) => {
-        if (!knownEmojis.has(String(emoji.id))) storeEmoji(emoji);
+        if (emoji?.id === CONFIRM_ID || emoji?.id === ERROR_ID) storeEmoji(emoji);
       });
-    } catch (error) {
-      console.error("[emojis]", error);
     }
+    await registerApplicationEmojis(client);
     console.log(`[emojis] confirm ${confirm()} | error ${errorMark()}`);
   })();
   return loadingEmojis;
