@@ -194,7 +194,10 @@ function makeMessage(guild, content, member) {
 }
 
 function titleOf(message) {
-  return message.replies.at(-1).embeds[0].data.title;
+  const data = message.replies.at(-1).embeds[0].data;
+  if (data.title) return data.title;
+  const match = String(data.description || "").match(/\*\*([^*]+)\*\*/);
+  return match ? match[1] : "";
 }
 
 function textOf(message) {

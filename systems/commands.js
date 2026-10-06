@@ -1,7 +1,7 @@
-const { EmbedBuilder } = require("discord.js");
 const vouchStore = require("../vouch/store");
 const roles = require("../vouch/roles");
-const { ACCENT, MAX_ALLOWANCE, MAX_ROLE_LIMIT } = require("../vouch/constants");
+const { MAX_ALLOWANCE, MAX_ROLE_LIMIT } = require("../vouch/constants");
+const { card } = require("../feedback");
 const { reply } = require("../vouch/ui");
 const catalog = require("../vouch/catalog");
 const vouchLogging = require("../vouch/logging");
@@ -407,7 +407,7 @@ const VERIFICATION = ["None", "Low", "Medium", "High", "Very High"];
 function imageReply(message, title, url, missing) {
   if (!url) return reply(message, title, missing, "error");
   return message.reply({
-    embeds: [new EmbedBuilder().setColor(ACCENT).setTitle(title).setImage(url).setDescription("")]
+    embeds: [card(title, "", { guild: message.guild }).setImage(url)]
   });
 }
 

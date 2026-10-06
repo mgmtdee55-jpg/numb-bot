@@ -1,13 +1,13 @@
 const { EmbedBuilder } = require("discord.js");
 const { ACCENT } = require("./constants");
-const { present } = require("../feedback");
+const { card } = require("../feedback");
 
 function embed(title, description, options) {
   const plain = options === true || options?.plain;
-  const body = plain
-    ? String(description || "").slice(0, 4000)
-    : present(title, description, { guild: options?.guild, tone: options?.tone });
-  return new EmbedBuilder().setColor(ACCENT).setTitle(title).setDescription(body);
+  if (plain) {
+    return new EmbedBuilder().setColor(ACCENT).setTitle(title).setDescription(String(description || "").slice(0, 4000));
+  }
+  return card(title, description, { guild: options?.guild, tone: options?.tone });
 }
 
 function reply(message, title, description, tone) {

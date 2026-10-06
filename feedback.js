@@ -1,5 +1,9 @@
+const { EmbedBuilder } = require("discord.js");
+
 const CONFIRM_ID = "1511840843198107839";
 const ERROR_ID = "1511840844276039811";
+const OK_COLOR = 0x57f287;
+const ERROR_COLOR = 0xed4245;
 
 const PLAIN_TITLES = new Set([
   "user info",
@@ -70,10 +74,41 @@ function present(title, description, options = {}) {
   return `${emoji}${text ? ` ${text}` : ""}`.slice(0, 4000);
 }
 
+function card(title, description, options = {}) {
+  let tone = options.tone || inferTone(title, description);
+  if (tone === "plain") tone = "ok";
+  const color = tone === "error" ? ERROR_COLOR : OK_COLOR;
+  const mark = options.mark || (tone === "error" ? errorMark(options.guild) : confirm(options.guild));
+  const body = String(description || "").trim();
+  const marked = body.includes(CONFIRM_ID) || body.includes(ERROR_ID) || (options.mark && body.startsWith(options.mark));
+  let text;
+  if (options.sentence) {
+    text = marked ? body : `${mark} ${body}`;
+  } else if (title && body) {
+    text = `${mark} **${title}**\n${body}`;
+  } else if (title) {
+    text = `${mark} **${title}**`;
+  } else {
+    text = marked ? body : `${mark}${body ? ` ${body}` : ""}`;
+  }
+  return new EmbedBuilder().setColor(color).setDescription(text.slice(0, 4000));
+}
+
+function heading(embed) {
+  const data = embed?.data || embed || {};
+  if (data.title) return data.title;
+  const match = String(data.description || "").match(/\*\*([^*]+)\*\*/);
+  return match ? match[1] : "";
+}
+
 module.exports = {
   CONFIRM_ID,
   ERROR_ID,
+  OK_COLOR,
+  ERROR_COLOR,
   confirm,
   errorMark,
-  present
+  present,
+  card,
+  heading
 };

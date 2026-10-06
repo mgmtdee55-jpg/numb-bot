@@ -3,6 +3,13 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
+function embedTitle(embed) {
+  const data = embed?.data || {};
+  if (data.title) return data.title;
+  const match = String(data.description || "").match(/\*\*([^*]+)\*\*/);
+  return match ? match[1] : "";
+}
+
 const { PermissionFlagsBits } = require("discord.js");
 
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "spanter-moderation-"));
@@ -124,7 +131,10 @@ function makeMessage(guild, content, member) {
 }
 
 function title(message) {
-  return message.replies[0].embeds[0].data.title;
+  const data = message.replies[0].embeds[0].data;
+  if (data.title) return data.title;
+  const match = String(data.description || "").match(/\*\*([^*]+)\*\*/);
+  return match ? match[1] : "";
 }
 
 function description(message) {
@@ -268,7 +278,7 @@ test("ban check, list, purge, recent, softban, and unbanall skip hardbans", asyn
   const mass = makeMessage(guild, "-unbanall", admin);
   await handleCommand(mass, null, "-");
   assert.equal(title(mass), "Mass Unban Started");
-  assert.equal(mass.replies.at(-1).embeds[0].data.title, "Mass Unban Finished");
+  assert.equal(embedTitle(mass.replies.at(-1).embeds[0]), "Mass Unban Finished");
   assert.equal(db.isHardbanned(guild.id, target.id), true);
   assert.equal(guild.unbanCalls.includes(other.id), true);
 });

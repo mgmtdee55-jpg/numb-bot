@@ -13,7 +13,7 @@ const {
   permissionHelpText
 } = require("./fake-permissions");
 const access = require("./systems/access");
-const { present } = require("./feedback");
+const { card } = require("./feedback");
 
 const ACCENT = 0x2b2d31;
 const tempbanTimers = new Map();
@@ -23,7 +23,7 @@ const FOREVERBAN_REASON_PREFIX = "FOREVERBAN";
 const ALT_ACCOUNT_AGE_MS = 30 * 86_400_000;
 
 function embed(title, description, guild) {
-  return new EmbedBuilder().setColor(ACCENT).setTitle(title).setDescription(present(title, description, { guild }));
+  return card(title, description, { guild });
 }
 
 function reply(message, title, description) {

@@ -3,6 +3,13 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
+function embedTitle(embed) {
+  const data = embed?.data || {};
+  if (data.title) return data.title;
+  const match = String(data.description || "").match(/\*\*([^*]+)\*\*/);
+  return match ? match[1] : "";
+}
+
 const { ChannelType, PermissionFlagsBits } = require("discord.js");
 
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "spanter-systems-"));
@@ -129,7 +136,10 @@ function makeMessage(guild, content, member) {
 }
 
 function titleOf(message) {
-  return message.replies.at(-1).embeds[0].data.title;
+  const data = message.replies.at(-1).embeds[0].data;
+  if (data.title) return data.title;
+  const match = String(data.description || "").match(/\*\*([^*]+)\*\*/);
+  return match ? match[1] : "";
 }
 
 function textOf(message) {
@@ -275,7 +285,7 @@ test("antinuke vouch commands use the existing vouch behavior", async () => {
   guild.roles.cache.set(founder.id, founder);
 
   const panel = await run(guild, member, "-vouch");
-  assert.equal(panel.replies[0].embeds[0].data.title, "Vouch");
+  assert.equal(embedTitle(panel.replies[0].embeds[0]), "Vouch");
   assert.equal(panel.replies[0].components[0].toJSON().components[0].custom_id, "spanter:vouch");
 
   const set = await run(guild, owner, `-antinuke vouch set ${reward.id}`);
@@ -407,7 +417,7 @@ test("channel controls lock, hide, lock every text channel, and nuke", async () 
   message.channel = general;
   await handleCommand(message, guild.client, "-");
   assert.equal(general.deleted, true);
-  assert.equal(general.copy.sent[0].embeds[0].data.title, "Channel Nuked");
+  assert.equal(embedTitle(general.copy.sent[0].embeds[0]), "Channel Nuked");
   assert.match(general.copy.sent[0].embeds[0].data.description, /#general/);
 });
 
@@ -461,7 +471,7 @@ test("event logs can be set, tested, and removed", async () => {
     }
   };
   await handleCommand(message, guild.client, "-");
-  assert.equal(message.replies[0].embeds[0].data.title, "Logs Updated");
+  assert.equal(embedTitle(message.replies[0].embeds[0]), "Logs Updated");
   assert.equal(store.getLog(guild.id, "message"), logChannel.id);
 
   const tested = await run(guild, owner, "-logs test message");

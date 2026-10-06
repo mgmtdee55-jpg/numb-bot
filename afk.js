@@ -1,5 +1,5 @@
 const { connection } = require("./db");
-const { confirm } = require("./feedback");
+const { card } = require("./feedback");
 
 const WELCOME_DELETE_MS = 30_000;
 
@@ -59,21 +59,28 @@ function mentionedIds(message) {
   return ids;
 }
 
+function replyCard(message, sentence, options = {}) {
+  return message.reply({
+    embeds: [card(null, sentence, { guild: message.guild, sentence: true, ...options })],
+    allowedMentions: options.allowedMentions
+  });
+}
+
 async function setAway(message, rawStatus) {
   const status = cleanStatus(rawStatus);
   writeStatus.run(message.guild.id, message.author.id, status, Date.now());
-  return message.reply({
-    content: `${confirm(message.guild)} You've been set as Away with the status: ${status}`,
+  return replyCard(message, `You've been set as **Away** with the status: **${status}**`, {
     allowedMentions: { parse: [] }
   });
 }
 
 async function welcomeBack(message, since) {
   const duration = formatDuration(Date.now() - Number(since));
-  const sent = await message.reply({
-    content: `👋 Welcome back <@${message.author.id}>, you were Away for: ${duration}`,
-    allowedMentions: { users: [message.author.id] }
-  });
+  const sent = await replyCard(
+    message,
+    `Welcome back <@${message.author.id}>, you were Away for: **${duration}**`,
+    { mark: "👋", allowedMentions: { users: [message.author.id] } }
+  );
   if (sent && typeof sent.delete === "function") {
     const timer = setTimeout(() => {
       sent.delete().catch(() => null);
@@ -100,11 +107,10 @@ async function observe(message, prefix) {
     const away = readStatus.get(guildId, id);
     if (!away) continue;
     const duration = formatDuration(Date.now() - Number(away.since));
-    lines.push(`${confirm(message.guild)} <@${id}> is Away with the status: **${away.status}**\nAway for: ${duration}`);
+    lines.push(`<@${id}> is Away with the status: **${away.status}**\nAway for: **${duration}**`);
   }
   if (!lines.length) return;
-  await message.reply({
-    content: lines.join("\n"),
+  await replyCard(message, lines.join("\n\n"), {
     allowedMentions: { parse: [], repliedUser: true }
   });
 }

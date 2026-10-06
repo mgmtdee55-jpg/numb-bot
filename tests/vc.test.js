@@ -3,6 +3,13 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
+function embedTitle(embed) {
+  const data = embed?.data || {};
+  if (data.title) return data.title;
+  const match = String(data.description || "").match(/\*\*([^*]+)\*\*/);
+  return match ? match[1] : "";
+}
+
 const BetterSqlite3 = require("better-sqlite3");
 const { ChannelType, EmbedBuilder, MessageFlags, PermissionFlagsBits } = require("discord.js");
 
@@ -248,11 +255,10 @@ test("-mvc reports only compact server voice statistics", async () => {
   assert.equal(payload.embeds.length, 1);
   assert.deepEqual(payload.components || [], []);
   const stats = payload.embeds[0].toJSON();
-  assert.equal(stats.title, "Voice Chat Stats");
-  assert.equal(
-    stats.description,
-    "**Member Count:** `2681`\n\n**In Call:** `2`\n\n**Total VC's:** `2`"
-  );
+  assert.equal(embedTitle(payload.embeds[0]), "Voice Chat Stats");
+  assert.match(stats.description, /\*\*Member Count:\*\* `2681`/);
+  assert.match(stats.description, /\*\*In Call:\*\* `2`/);
+  assert.match(stats.description, /\*\*Total VC's:\*\* `2`/);
   assert.deepEqual(Object.keys(stats).filter((key) => ["fields", "image", "thumbnail", "footer"].includes(key)), []);
 });
 
@@ -261,7 +267,7 @@ test("-vc shows the shared personal interface only for the current managed VC", 
   const outside = makeMember(guild, guild.ownerId);
   const outsideMessage = makeMessage(guild, "-vc", outside, outside);
   await handleCommand(outsideMessage, null, "-");
-  assert.equal(outsideMessage.replies[0], "<:error:1511840844276039811> your not in a vc channel created by spanter buddy");
+  assert.match(outsideMessage.replies[0].embeds[0].data.description, /<:error:1511840844276039811> \*\*Not In VC\*\*\nyour not in a vc channel created by spanter buddy/);
 
   const owner = makeMember(guild, "212121212121212121");
   const channel = makeVoiceChannel(guild, "vc-personal-interface-channel", [owner]);
@@ -276,7 +282,7 @@ test("-vc shows the shared personal interface only for the current managed VC", 
   await handleCommand(insideMessage, null, "-");
 
   const payload = insideMessage.replies[0];
-  assert.equal(payload.embeds[0].data.title, "VoiceMaster Interface");
+  assert.equal(embedTitle(payload.embeds[0]), "VoiceMaster Interface");
   assert.match(payload.embeds[0].data.description, new RegExp(`<@${owner.id}>`));
   assert.equal(payload.embeds[0].data.thumbnail.url, `https://cdn.example/${guild.id}-icon.png`);
   assert.deepEqual(
@@ -666,7 +672,7 @@ test("every interface button enforces ownership and performs its action", async 
   await controls.handleButton(denied);
   assert.equal(denied.deferred, true);
   assert.equal(denied.deferPayload.flags, MessageFlags.Ephemeral);
-  assert.match(denied.updates[0].embeds[0].data.title, /Owner Only/);
+  assert.match(embedTitle(denied.updates[0].embeds[0]), /Owner Only/);
   assert.equal(channel.permissionOverwrites.edits.length, 0);
 
   for (const [action, key, expected] of [
@@ -695,7 +701,7 @@ test("every interface button enforces ownership and performs its action", async 
   const kick = makeInteraction(guild, "vc_select_kick", { type: "user", values: [target.id] });
   await controls.handleSelect(kick);
   assert.equal(kick.deferred, true);
-  assert.match(kick.updates[0].embeds[0].data.title, /Kicked/);
+  assert.match(embedTitle(kick.updates[0].embeds[0]), /Kicked/);
   assert.equal(target.voice.channelId, null);
 
   target.voice.channel = channel;
@@ -752,7 +758,7 @@ test("rapid lock clicks are cooled down per user and channel", async () => {
   await controls.handleButton(second);
 
   assert.equal(channel.permissionOverwrites.edits.length, 1);
-  assert.match(second.updates[0].embeds[0].data.title, /Please Wait/);
+  assert.match(embedTitle(second.updates[0].embeds[0]), /Please Wait/);
 
   const independentOwner = makeMember(guild, "454545454545454545");
   const otherChannel = makeVoiceChannel(guild, "other-lock-cooldown-channel", [independentOwner]);
@@ -785,7 +791,7 @@ test("simultaneous claim clicks assign ownership once and refresh the existing p
   assert.equal(db.getTempChannel(channel.id).interface_message_id, channel.sent[0].id);
   const repeat = makeInteraction(guild, "vc_claim", { userId: ownerId });
   await controls.handleButton(repeat);
-  assert.match(repeat.updates[0].embeds[0].data.title, /Please Wait/);
+  assert.match(embedTitle(repeat.updates[0].embeds[0]), /Please Wait/);
   assert.equal(channel.sent.length, 1);
 });
 
@@ -805,23 +811,23 @@ test("Discord rate-limit failures return a temporary response and release the VC
 
   const limited = makeInteraction(guild, "vc_lock", { userId: owner.id });
   await controls.handleButton(limited);
-  assert.match(limited.updates[0].embeds[0].data.title, /Temporarily Rate Limited/);
+  assert.match(embedTitle(limited.updates[0].embeds[0]), /Temporarily Rate Limited/);
 
   channel.permissionOverwrites.edit = async () => {};
   const recovered = makeInteraction(guild, "vc_ghost", { userId: owner.id });
   await controls.handleButton(recovered);
-  assert.match(recovered.updates[0].embeds[0].data.title, /Hidden/);
+  assert.match(embedTitle(recovered.updates[0].embeds[0]), /Hidden/);
 
   channel.permissionOverwrites.edit = async () => {
     throw new Error("simulated Discord API failure");
   };
   const failed = makeInteraction(guild, "vc_unlock", { userId: owner.id });
   await controls.handleButton(failed);
-  assert.match(failed.updates[0].embeds[0].data.title, /Unable to Complete/);
+  assert.match(embedTitle(failed.updates[0].embeds[0]), /Unable to Complete/);
   channel.permissionOverwrites.edit = async () => {};
   const afterFailure = makeInteraction(guild, "vc_unghost", { userId: owner.id });
   await controls.handleButton(afterFailure);
-  assert.match(afterFailure.updates[0].embeds[0].data.title, /Visible/);
+  assert.match(embedTitle(afterFailure.updates[0].embeds[0]), /Visible/);
 });
 
 test("cooldown expiry is deterministic and per action, channel, and user", () => {
@@ -857,7 +863,7 @@ test("all text commands work for the owner and reject other members", async () =
   assert.equal(channel.userLimit, 7);
   const invalidLimit = makeMessage(guild, "-vc limit 100", owner, owner);
   await handleCommand(invalidLimit, null, "-");
-  assert.match(invalidLimit.replies[0].embeds[0].data.title, /Invalid Limit/);
+  assert.match(embedTitle(invalidLimit.replies[0].embeds[0]), /Invalid Limit/);
 
   for (const sub of ["kick", "ban", "unban", "permit"]) {
     target.voice.channel = channel;
@@ -870,7 +876,7 @@ test("all text commands work for the owner and reject other members", async () =
 
   const unauthorized = makeMessage(guild, "-vc lock", other, other);
   await handleCommand(unauthorized, null, "-");
-  assert.match(unauthorized.replies[0].embeds[0].data.title, /Owner Only/);
+  assert.match(embedTitle(unauthorized.replies[0].embeds[0]), /Owner Only/);
 
   const claimChannel = makeVoiceChannel(guild, "text-claim-channel", [other]);
   db.addTemp({
@@ -909,7 +915,7 @@ test("manual interface recovery uses the canonical renderer without duplicating 
   const secondRecovery = makeMessage(guild, "-send interface", owner, owner);
   await handleCommand(secondRecovery, null, "-");
   assert.equal(channel.sent.length, 1);
-  assert.match(secondRecovery.replies[0].embeds[0].data.title, /Please Wait/);
+  assert.match(embedTitle(secondRecovery.replies[0].embeds[0]), /Please Wait/);
   assert.equal(db.getTempChannel(channel.id).interface_message_id, channel.sent[0].id);
 });
 
@@ -968,7 +974,7 @@ test("server interface matches the shared panel without an owner mention and is 
   const serverPayload = result.payload;
   const tempPayload = await voice.buildVoiceChannelInterfacePayload(guild, "owner-id");
 
-  assert.equal(serverPayload.embeds[0].data.title, "VoiceMaster Interface");
+  assert.equal(embedTitle(serverPayload.embeds[0]), "VoiceMaster Interface");
   assert.equal(serverPayload.embeds[0].data.description, tempPayload.embeds[0].data.description.replace("<@owner-id>\n\n", "\n\n"));
   assert.equal(serverPayload.embeds[0].data.thumbnail.url, tempPayload.embeds[0].data.thumbnail.url);
   assert.deepEqual(
@@ -1470,7 +1476,7 @@ test("setup is owner-only, button-driven, cancellable, configurable, and reconfi
   const other = makeMember(guild, "101010101010101010");
   const nonOwnerCommand = makeMessage(guild, "-vc setup", other, other);
   await handleCommand(nonOwnerCommand, null, "-");
-  assert.match(nonOwnerCommand.replies[0].embeds[0].data.title, /Owner Only/);
+  assert.match(embedTitle(nonOwnerCommand.replies[0].embeds[0]), /Owner Only/);
 
   const setupCommand = makeMessage(guild, "-vc setup", owner, owner);
   await handleCommand(setupCommand, null, "-");
@@ -1481,10 +1487,10 @@ test("setup is owner-only, button-driven, cancellable, configurable, and reconfi
   const unauthorizedOpen = makeInteraction(guild, openId, { userId: other.id });
   await setupWizard.handleSetupInteraction(unauthorizedOpen);
   assert.equal(unauthorizedOpen.replies[0].flags, MessageFlags.Ephemeral);
-  assert.match(unauthorizedOpen.replies[0].embeds[0].data.title, /Owner Only/);
+  assert.match(embedTitle(unauthorizedOpen.replies[0].embeds[0]), /Owner Only/);
   const unauthorizedReconfigure = makeInteraction(guild, `setup:${owner.id}:reconfigure`, { userId: other.id });
   await setupWizard.handleSetupInteraction(unauthorizedReconfigure);
-  assert.match(unauthorizedReconfigure.replies[0].embeds[0].data.title, /Owner Only/);
+  assert.match(embedTitle(unauthorizedReconfigure.replies[0].embeds[0]), /Owner Only/);
 
   const open = makeInteraction(guild, openId);
   await setupWizard.handleSetupInteraction(open);
@@ -1496,11 +1502,11 @@ test("setup is owner-only, button-driven, cancellable, configurable, and reconfi
   });
   await setupWizard.handleSetupInteraction(chooseJ2c);
   assert.match(componentId(chooseJ2c.responseMessage.payload.components[1], 1), /:next$/);
-  assert.match(chooseJ2c.responseMessage.payload.embeds[0].data.title, /Join to Create/);
+  assert.match(embedTitle(chooseJ2c.responseMessage.payload.embeds[0]), /Join to Create/);
 
   const resumed = makeInteraction(guild, openId);
   await setupWizard.handleSetupInteraction(resumed);
-  assert.match(resumed.responseMessage.payload.embeds[0].data.title, /Join to Create/);
+  assert.match(embedTitle(resumed.responseMessage.payload.embeds[0]), /Join to Create/);
   assert.match(componentId(resumed.responseMessage.payload.components[1], 1), /:next$/);
 
   const back = makeInteraction(guild, `setup:${owner.id}:back`, {
@@ -1513,7 +1519,7 @@ test("setup is owner-only, button-driven, cancellable, configurable, and reconfi
     message: resumed.responseMessage
   });
   await setupWizard.handleSetupInteraction(goCategory);
-  assert.match(goCategory.responseMessage.payload.embeds[0].data.title, /Category/);
+  assert.match(embedTitle(goCategory.responseMessage.payload.embeds[0]), /Category/);
   assert.match(goCategory.responseMessage.payload.embeds[0].data.description, /up to 3 overflow categories/);
   assert.equal(goCategory.responseMessage.payload.components[0].components[0].data.max_values, 3);
 
@@ -1521,13 +1527,13 @@ test("setup is owner-only, button-driven, cancellable, configurable, and reconfi
     message: goCategory.responseMessage
   });
   await setupWizard.handleSetupInteraction(backToJ2c);
-  assert.match(backToJ2c.responseMessage.payload.embeds[0].data.title, /Join to Create/);
+  assert.match(embedTitle(backToJ2c.responseMessage.payload.embeds[0]), /Join to Create/);
   const cancel = makeInteraction(guild, `setup:${owner.id}:cancel`, {
     message: backToJ2c.responseMessage
   });
   await setupWizard.handleSetupInteraction(cancel);
   assert.equal(db.getConfig(guild.id), undefined);
-  assert.match(cancel.responseMessage.payload.embeds[0].data.title, /Cancelled/);
+  assert.match(embedTitle(cancel.responseMessage.payload.embeds[0]), /Cancelled/);
 
   const reopen = makeInteraction(guild, openId);
   await setupWizard.handleSetupInteraction(reopen);
@@ -1553,11 +1559,11 @@ test("setup is owner-only, button-driven, cancellable, configurable, and reconfi
     fields: { getTextInputValue: () => "Hangout for {nickname} ({username}) {user.mention}" }
   });
   await setupWizard.handleSetupInteraction(nameSubmit);
-  assert.match(wizardMessage.payload.embeds[0].data.title, /Temporary VC Name/);
+  assert.match(embedTitle(wizardMessage.payload.embeds[0]), /Temporary VC Name/);
   await setupWizard.handleSetupInteraction(makeInteraction(guild, `setup:${owner.id}:next`, {
     message: wizardMessage
   }));
-  assert.match(wizardMessage.payload.embeds[0].data.title, /User Limit/);
+  assert.match(embedTitle(wizardMessage.payload.embeds[0]), /User Limit/);
 
   await setupWizard.handleSetupInteraction(makeInteraction(guild, `setup:${owner.id}:limit_tens`, {
     type: "string", values: ["2"], message: wizardMessage
@@ -1568,7 +1574,7 @@ test("setup is owner-only, button-driven, cancellable, configurable, and reconfi
   await setupWizard.handleSetupInteraction(makeInteraction(guild, `setup:${owner.id}:next`, {
     message: wizardMessage
   }));
-  assert.match(wizardMessage.payload.embeds[0].data.title, /Bitrate/);
+  assert.match(embedTitle(wizardMessage.payload.embeds[0]), /Bitrate/);
   await setupWizard.handleSetupInteraction(makeInteraction(guild, `setup:${owner.id}:bitrate`, {
     type: "string", values: ["96000"], message: wizardMessage
   }));
@@ -1589,13 +1595,13 @@ test("setup is owner-only, button-driven, cancellable, configurable, and reconfi
   await setupWizard.handleSetupInteraction(makeInteraction(guild, `setup:${owner.id}:next`, {
     message: wizardMessage
   }));
-  assert.match(wizardMessage.payload.embeds[0].data.title, /Review/);
+  assert.match(embedTitle(wizardMessage.payload.embeds[0]), /Review/);
 
   const createCount = guild.channels.cache.size;
   const confirm = makeInteraction(guild, `setup:${owner.id}:confirm`, { message: wizardMessage });
   await setupWizard.handleSetupInteraction(confirm);
   assert.equal(confirm.deferred, true);
-  assert.match(wizardMessage.payload.embeds[0].data.title, /Setup Complete/);
+  assert.match(embedTitle(wizardMessage.payload.embeds[0]), /Setup Complete/);
   const config = db.getConfig(guild.id);
   assert.equal(config.j2c_channel_id, j2c.id);
   assert.equal(config.category_id, category.id);
@@ -1609,7 +1615,7 @@ test("setup is owner-only, button-driven, cancellable, configurable, and reconfi
 
   const reopenExisting = makeInteraction(guild, openId);
   await setupWizard.handleSetupInteraction(reopenExisting);
-  assert.match(reopenExisting.responseMessage.payload.embeds[0].data.title, /Already Configured/);
+  assert.match(embedTitle(reopenExisting.responseMessage.payload.embeds[0]), /Already Configured/);
   const cancelExisting = makeInteraction(guild, `setup:${owner.id}:cancel-existing`, {
     message: reopenExisting.responseMessage
   });
@@ -1669,7 +1675,7 @@ test("setup is owner-only, button-driven, cancellable, configurable, and reconfi
   await setupWizard.handleSetupInteraction(makeInteraction(guild, `setup:${owner.id}:confirm`, {
     message: reconfigureMessage
   }));
-  assert.match(reconfigureMessage.payload.embeds[0].data.title, /Setup Complete/);
+  assert.match(embedTitle(reconfigureMessage.payload.embeds[0]), /Setup Complete/);
   assert.equal([...guild.channels.cache.values()].filter((channel) => channel.name === "server-interface").length, 1);
 });
 
@@ -1851,7 +1857,7 @@ test("optional setup values can be skipped and the wizard can be cancelled", asy
   await setupWizard.handleSetupInteraction(makeInteraction(guild, actionId("next"), { message }));
   assert.match(componentId(message.payload.components[1], 2), /:skip$/);
   await setupWizard.handleSetupInteraction(makeInteraction(guild, actionId("skip"), { message }));
-  assert.match(message.payload.embeds[0].data.title, /User Limit/);
+  assert.match(embedTitle(message.payload.embeds[0]), /User Limit/);
 
   await setupWizard.handleSetupInteraction(makeInteraction(guild, actionId("limit_tens"), {
     type: "string", values: ["0"], message
@@ -1870,7 +1876,7 @@ test("optional setup values can be skipped and the wizard can be cancelled", asy
   await setupWizard.handleSetupInteraction(makeInteraction(guild, actionId("next"), { message }));
   assert.match(componentId(message.payload.components[1], 2), /:skip$/);
   await setupWizard.handleSetupInteraction(makeInteraction(guild, actionId("skip"), { message }));
-  assert.match(message.payload.embeds[0].data.title, /Review/);
+  assert.match(embedTitle(message.payload.embeds[0]), /Review/);
   assert.match(message.payload.embeds[0].data.description, /Server interface: Yes/);
 
   await setupWizard.handleSetupInteraction(makeInteraction(guild, actionId("cancel"), { message }));
@@ -1884,12 +1890,12 @@ test("setup expiration edits the private wizard and does not create a configurat
   await setupWizard.handleSetupInteraction(interaction);
   t.mock.timers.tick(10 * 60 * 1000 + 1);
   await new Promise((resolve) => setImmediate(resolve));
-  assert.match(interaction.responseMessage.payload.embeds[0].data.title, /Expired/);
+  assert.match(embedTitle(interaction.responseMessage.payload.embeds[0]), /Expired/);
   assert.equal(db.getConfig(guild.id), undefined);
 
   const reopen = makeInteraction(guild, `setup-open:${guild.ownerId}`);
   await setupWizard.handleSetupInteraction(reopen);
-  assert.match(reopen.responseMessage.payload.embeds[0].data.title, /Join to Create/);
+  assert.match(embedTitle(reopen.responseMessage.payload.embeds[0]), /Join to Create/);
   await setupWizard.handleSetupInteraction(makeInteraction(guild, `setup:${guild.ownerId}:cancel`, {
     message: reopen.responseMessage
   }));

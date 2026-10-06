@@ -42,8 +42,10 @@ test("confirmations and errors use the configured emoji ids", () => {
   assert.match(present("Rank Assigned", "done"), new RegExp(CONFIRM_ID));
   assert.match(present("Access Denied", "nope"), new RegExp(ERROR_ID));
   assert.match(present("Usage", "`-afk [status]`"), new RegExp(ERROR_ID));
-  assert.equal(present("User Info", "plain text").includes(CONFIRM_ID), false);
-  assert.equal(present("User Info", "plain text").includes(ERROR_ID), false);
+  const info = require("../feedback").card("User Info", "plain text").data;
+  assert.match(info.description, new RegExp(CONFIRM_ID));
+  assert.equal(info.color, 0x57f287);
+  assert.match(require("../feedback").card("Access Denied", "nope").data.description, new RegExp(ERROR_ID));
 });
 
 test("afk announces a status, answers mentions, and welcomes the member back", async () => {
@@ -54,8 +56,11 @@ test("afk announces a status, answers mentions, and welcomes the member back", a
   set.author = member.user;
   set.member = member;
   await handleCommand(set, guild.client, "-");
-  assert.match(set.replies[0].content, new RegExp(CONFIRM_ID));
-  assert.match(set.replies[0].content, /Away with the status: grabbing food/);
+  const setEmbed = set.replies[0].embeds[0].data;
+  assert.equal(setEmbed.title, undefined);
+  assert.equal(setEmbed.color, 0x57f287);
+  assert.match(setEmbed.description, new RegExp(CONFIRM_ID));
+  assert.match(setEmbed.description, /You've been set as \*\*Away\*\* with the status: \*\*grabbing food\*\*/);
 
   connection.prepare("UPDATE afk_status SET since=? WHERE guild_id=? AND user_id=?").run(Date.now() - 8000, guild.id, member.id);
 
@@ -63,21 +68,25 @@ test("afk announces a status, answers mentions, and welcomes the member back", a
   asker.guild = guild;
   asker.mentions.users.set(member.id, { id: member.id });
   await afk.observe(asker, "-");
-  assert.match(asker.replies[0].content, /grabbing food/);
-  assert.match(asker.replies[0].content, /8 seconds/);
-  assert.match(asker.replies[0].content, new RegExp(CONFIRM_ID));
+  const askEmbed = asker.replies[0].embeds[0].data;
+  assert.match(askEmbed.description, /grabbing food/);
+  assert.match(askEmbed.description, /\*\*8 seconds\*\*/);
+  assert.match(askEmbed.description, new RegExp(CONFIRM_ID));
+  assert.equal(askEmbed.color, 0x57f287);
 
   const reply = message("reply", "111000000000000013");
   reply.guild = guild;
   reply.mentions.repliedUser = { id: member.id };
   await afk.observe(reply, "-");
-  assert.match(reply.replies[0].content, /grabbing food/);
+  assert.match(reply.replies[0].embeds[0].data.description, /grabbing food/);
 
   const back = message("k", member.id);
   back.guild = guild;
   await afk.observe(back, "-");
-  assert.match(back.replies[0].content, /👋 Welcome back <@111000000000000012>/);
-  assert.match(back.replies[0].content, /Away for: 8 seconds/);
+  const backEmbed = back.replies[0].embeds[0].data;
+  assert.match(backEmbed.description, /👋 Welcome back <@111000000000000012>/);
+  assert.match(backEmbed.description, /Away for: \*\*8 seconds\*\*/);
+  assert.equal(backEmbed.color, 0x57f287);
   assert.equal(afk.WELCOME_DELETE_MS, 30000);
 
   const again = message("still here", member.id);

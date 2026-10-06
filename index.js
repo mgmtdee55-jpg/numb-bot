@@ -4,7 +4,6 @@ const {
   Client,
   GatewayIntentBits,
   Partials,
-  EmbedBuilder,
   MessageFlags
 } = require("discord.js");
 const db = require("./db");
@@ -26,7 +25,7 @@ const { startTempbanScheduler, enforceHardban, enforceForeverban, restoreForever
 const vouch = require("./vouch");
 const systems = require("./systems");
 const afk = require("./afk");
-const { present } = require("./feedback");
+const { card } = require("./feedback");
 let cleanupRunning = false;
 let recoveryRunning = false;
 const recoveryCursors = new Map();
@@ -81,10 +80,7 @@ client.on("messageCreate", async (message) => {
     console.error("[command]", error);
     await message.reply({
       embeds: [
-        new EmbedBuilder()
-          .setColor(0x2b2d31)
-          .setTitle("Unable to complete")
-          .setDescription(present("Unable to complete", "The command could not be completed. Please check the bot's channel permissions.", { guild: message.guild }))
+        card("Unable to complete", "The command could not be completed. Please check the bot's channel permissions.", { guild: message.guild })
       ]
     }).catch((replyError) => console.error("[command error reply]", replyError));
   }
@@ -181,10 +177,7 @@ client.on("interactionCreate", async (interaction) => {
     } else if (interaction.isRepliable() && !interaction.replied && !interaction.deferred) {
       await interaction.reply({
         embeds: [
-          new EmbedBuilder()
-            .setColor(0x2b2d31)
-            .setTitle("Unavailable")
-            .setDescription(present("Unavailable", "This interaction is not supported.", { guild: interaction.guild }))
+          card("Unavailable", "This interaction is not supported.", { guild: interaction.guild })
         ],
         flags: MessageFlags.Ephemeral
       });
@@ -193,10 +186,7 @@ client.on("interactionCreate", async (interaction) => {
     console.error("[interaction]", error);
     const payload = {
       embeds: [
-        new EmbedBuilder()
-          .setColor(0x2b2d31)
-          .setTitle("Unable to complete")
-          .setDescription(present("Unable to complete", "That action could not be completed. Check that the bot has the required channel permissions.", { guild: interaction.guild }))
+        card("Unable to complete", "That action could not be completed. Check that the bot has the required channel permissions.", { guild: interaction.guild })
       ],
       flags: MessageFlags.Ephemeral
     };
