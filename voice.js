@@ -1,0 +1,516 @@
+const {
+  ChannelType,
+  PermissionFlagsBits,
+  EmbedBuilder,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle
+} = require("discord.js");
+const db = require("./db");
+const { withChannelLock } = require("./channel-lock");
+const { logThrottledError } = require("./log-throttle");
+
+const tempInterfaceTasks = new Map();
+const serverInterfaceTasks = new Map();
+const interfaceEmojiStrings = new Map();
+const pendingCategoryMembers = new Map();
+const SERVER_INTERFACE_TOPIC = "Persistent VoiceMaster server interface";
+const DEFAULT_CATEGORY_OVERFLOW_THRESHOLD = 99;
+const CATEGORY_RESERVATION_TTL_MS = 10000;
+const VC_INTERFACE_ICONS = {
+  lock: "1472443164995358872",
+  unlock: "1472443249745723402",
+  ghost: "1496366812340686958",
+  unghost: "1496366791092342885",
+  kick: "1473734317518618767",
+  ban: "1473734312720466124",
+  unban: "1473734330109919360",
+  permit: "1473734325882192130",
+  claim: "1473734314989584451",
+  limit: "1473734316331765857"
+};
+
+async function findBotMessage(channel, title) {
+  const botId = channel.client?.user?.id || channel.guild.members.me?.id;
+  if (!botId) return null;
+  const messages = await channel.messages.fetch({ limit: 25 });
+  return messages.find((message) =>
+    message.author.id === botId &&
+    message.embeds.some((embed) => embed.title === title)
+  ) || null;
+}
+
+async function getInterfaceEmojiStrings(guild) {
+  let pending = interfaceEmojiStrings.get(guild.id);
+  if (!pending) {
+    pending = (async () => {
+      let emojiCache = guild.emojis?.cache;
+      if (Object.values(VC_INTERFACE_ICONS).some((id) => !emojiCache?.has(id))) {
+        try {
+          emojiCache = await guild.emojis.fetch();
+        } catch (error) {
+          console.error(`[VC interface emoji lookup] ${guild.id}`, error);
+          emojiCache = guild.emojis?.cache;
+        }
+      }
+      return Object.fromEntries(Object.entries(VC_INTERFACE_ICONS).map(([action, id]) => {
+        const emoji = emojiCache?.get(id) || guild.emojis?.cache?.get(id);
+        return [action, emoji ? emoji.toString() : ""];
+      }));
+    })();
+    interfaceEmojiStrings.set(guild.id, pending);
+    pending.catch(() => {
+      if (interfaceEmojiStrings.get(guild.id) === pending) interfaceEmojiStrings.delete(guild.id);
+    });
+  }
+  return pending;
+}
+
+function panelEmbed(ownerId, guildIconUrl = null, emojiStrings = {}) {
+  const commandDescriptions = {
+    lock: "`vc lock` — Lock your voice channel",
+    unlock: "`vc unlock` — Unlock your voice channel",
+    ghost: "`vc ghost` — Hide your voice channel",
+    unghost: "`vc unghost` — Show your voice channel",
+    kick: "`vc kick` @user — Kick a user",
+    ban: "`vc ban` @user — Prevent a user from joining",
+    unban: "`vc unban` @user — Allow a banned user to join",
+    permit: "`vc permit` @user — Permit a user to join",
+    claim: "`vc claim` — Take ownership of an empty channel",
+    limit: "`vc limit` `<number>` — Set user limit"
+  };
+  const commandList = [
+    ...Object.entries(commandDescriptions).map(([action, description]) =>
+      `${emojiStrings[action] || ""} ${description}`
+    )
+  ].join("\n");
+  const embed = new EmbedBuilder()
+    .setColor(0x2b2d31)
+    .setTitle("VoiceMaster Interface")
+    .setDescription(
+      `${ownerId ? `<@${ownerId}>` : ""}\n\n` +
+      "Use the controls below to manage\nyour voice channel with ease.\n\n" +
+      commandList
+    );
+  if (guildIconUrl) embed.setThumbnail(guildIconUrl);
+  return embed;
+}
+
+function panelRows() {
+  const ids = ["lock", "unlock", "ghost", "unghost", "kick", "ban", "unban", "permit", "claim", "limit"];
+  const rows = [];
+  for (let i = 0; i < ids.length; i += 5) {
+    rows.push(
+      new ActionRowBuilder().addComponents(
+        ...ids.slice(i, i + 5).map((id) => {
+          const button = new ButtonBuilder()
+            .setCustomId(`vc_${id}`)
+            .setStyle(ButtonStyle.Secondary);
+          if (VC_INTERFACE_ICONS[id]) button.setEmoji({ id: VC_INTERFACE_ICONS[id] });
+          return button;
+        })
+      )
+    );
+  }
+  return rows;
+}
+
+function configuredCategoryIds(config) {
+  let ids = [];
+  try {
+    ids = Array.isArray(config.category_ids) ? config.category_ids : JSON.parse(config.category_ids || "[]");
+  } catch {
+    ids = [];
+  }
+  return [...new Set([config.category_id, ...ids].filter(Boolean))];
+}
+
+function categoryOverflowThreshold() {
+  const rawValue = process.env.VC_CATEGORY_OVERFLOW_THRESHOLD;
+  const configured = /^\d+$/.test(rawValue || "") ? Number(rawValue) : NaN;
+  return Number.isInteger(configured) && configured > 0
+    ? configured
+    : DEFAULT_CATEGORY_OVERFLOW_THRESHOLD;
+}
+
+function reserveTempCategory(guild, config, memberId = null) {
+  const categoryIds = configuredCategoryIds(config);
+  if (!categoryIds.length && config.category_id) categoryIds.push(config.category_id);
+  if (!categoryIds.length) throw new Error(`No temporary VC categories configured for guild ${guild.id}.`);
+
+  const loads = categoryIds.map((categoryId) => {
+    const channels = [...guild.channels.cache.values()]
+      .filter((channel) => channel.type === ChannelType.GuildVoice && channel.parentId === categoryId);
+    const connectedMembers = new Set(channels.flatMap((channel) => [...channel.members.keys()]));
+    const pendingMembers = pendingCategoryMembers.get(`${guild.id}:${categoryId}`) || new Set();
+    const notYetObservedReservations = [...pendingMembers]
+      .filter((userId) => !connectedMembers.has(userId)).length;
+    return connectedMembers.size + notYetObservedReservations;
+  });
+  const availableIndex = loads.findIndex((load) => load < categoryOverflowThreshold());
+  const selectedIndex = availableIndex < 0 ? categoryIds.length - 1 : availableIndex;
+  const categoryId = categoryIds[selectedIndex];
+  const reservationKey = `${guild.id}:${categoryId}`;
+  const reservationId = memberId || Symbol("pending category member");
+  let reservations = pendingCategoryMembers.get(reservationKey);
+  if (!reservations) {
+    reservations = new Set();
+    pendingCategoryMembers.set(reservationKey, reservations);
+  }
+  reservations.add(reservationId);
+  let released = false;
+
+  return {
+    categoryId,
+    release(waitForVoiceCache = true) {
+      if (released) return;
+      released = true;
+      const releaseReservation = () => {
+        const current = pendingCategoryMembers.get(reservationKey);
+        current?.delete(reservationId);
+        if (current?.size === 0) pendingCategoryMembers.delete(reservationKey);
+      };
+      if (!waitForVoiceCache) {
+        releaseReservation();
+        return;
+      }
+      const timer = setTimeout(releaseReservation, CATEGORY_RESERVATION_TTL_MS);
+      timer.unref?.();
+    }
+  };
+}
+
+async function buildVoiceChannelInterfacePayload(guild, ownerId = null, { showOwner = true } = {}) {
+  const emojiStrings = await getInterfaceEmojiStrings(guild);
+  return {
+    embeds: [panelEmbed(
+      showOwner ? ownerId : null,
+      guild.iconURL({ extension: "png", size: 128 }),
+      emojiStrings
+    )],
+    components: panelRows()
+  };
+}
+
+function renderName(template, member) {
+  return template
+    .replaceAll("{nickname}", member.displayName)
+    .replaceAll("{username}", member.user.username)
+    .replaceAll("{user.mention}", `<@${member.id}>`)
+    .slice(0, 100);
+}
+
+async function renderVoiceChannelInterface(channel, ownerId, savedMessageId = null, recoverOrphan = false) {
+  if (tempInterfaceTasks.has(channel.id)) return tempInterfaceTasks.get(channel.id);
+  const task = (async () => {
+    const panel = await buildVoiceChannelInterfacePayload(channel.guild, ownerId);
+    if (savedMessageId) {
+      try {
+        const message = await channel.messages.fetch(savedMessageId);
+        await message.edit(panel);
+        return message;
+      } catch (error) {
+        if (error.code !== 10008) throw error;
+      }
+    }
+    if (recoverOrphan) {
+      const existingMessage = await findBotMessage(channel, "VoiceMaster Interface");
+      if (existingMessage) {
+        await existingMessage.edit(panel);
+        db.updateTempInterface(channel.id, existingMessage.id);
+        return existingMessage;
+      }
+    }
+    const message = await channel.send(panel);
+    db.updateTempInterface(channel.id, message.id);
+    return message;
+  })();
+  tempInterfaceTasks.set(channel.id, task);
+  try {
+    return await task;
+  } finally {
+    tempInterfaceTasks.delete(channel.id);
+  }
+}
+
+async function createTempChannel(guild, member, config) {
+  const channel = await guild.channels.create({
+    name: renderName(config.name_template || "{nickname}'s Channel", member),
+    type: ChannelType.GuildVoice,
+    parent: config.category_id,
+    bitrate: config.bitrate,
+    userLimit: config.user_limit,
+    permissionOverwrites: [
+      {
+        id: guild.roles.everyone.id,
+        allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect]
+      },
+      {
+        id: member.id,
+        allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect]
+      }
+    ],
+    reason: "VoiceMaster: temporary voice channel"
+  });
+
+  try {
+    db.addTemp({
+      channel_id: channel.id,
+      guild_id: guild.id,
+      owner_id: member.id,
+      interface_message_id: null,
+      created_at: Date.now()
+    });
+    return channel;
+  } catch (error) {
+    if (channel.members.size === 0) {
+      await channel.delete("VoiceMaster: failed to finish temporary channel setup").catch((deleteError) => {
+        console.error(`[temp channel rollback] ${channel.id}`, deleteError);
+      });
+      db.markTempDeleted(channel.id);
+    }
+    throw error;
+  }
+}
+
+async function createServerInterface(guild, config, existingConfig = null, { deferExistingEdit = false } = {}) {
+  if (serverInterfaceTasks.has(guild.id)) return serverInterfaceTasks.get(guild.id);
+  const task = (async () => {
+    let channel = null;
+    let createdChannel = false;
+    let createdMessage = false;
+    let message = null;
+    const payload = await buildVoiceChannelInterfacePayload(guild, null, { showOwner: false });
+
+    if (existingConfig?.server_interface_enabled && existingConfig.server_interface_channel_id !== "disabled") {
+      channel = await guild.channels.fetch(existingConfig.server_interface_channel_id).catch((error) => {
+        if (error.code === 10003) return null;
+        throw error;
+      });
+    }
+    if (!channel) {
+      channel = [...guild.channels.cache.values()].find((candidate) =>
+        candidate.type === ChannelType.GuildText &&
+        candidate.name === "server-interface" &&
+        candidate.topic === SERVER_INTERFACE_TOPIC &&
+        candidate.parentId === config.category_id
+      ) || null;
+    }
+    if (!channel || channel.type !== ChannelType.GuildText) {
+      channel = await guild.channels.create({
+        name: "server-interface",
+        type: ChannelType.GuildText,
+        parent: config.category_id,
+        topic: SERVER_INTERFACE_TOPIC,
+        permissionOverwrites: [{
+          id: guild.roles.everyone.id,
+          allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory],
+          deny: [PermissionFlagsBits.SendMessages]
+        }],
+        reason: "VoiceMaster: persistent server interface"
+      });
+      createdChannel = true;
+    }
+
+    try {
+      if (!createdChannel) {
+        await channel.permissionOverwrites.edit(guild.roles.everyone, {
+          ViewChannel: true,
+          ReadMessageHistory: true,
+          SendMessages: false
+        });
+      }
+      if (existingConfig?.server_interface_message_id && !createdChannel) {
+        try {
+          message = await channel.messages.fetch(existingConfig.server_interface_message_id);
+          if (!deferExistingEdit) await message.edit(payload);
+        } catch (error) {
+          if (error.code !== 10008) throw error;
+        }
+      }
+      if (!message && !createdChannel) {
+        message = await findBotMessage(channel, "VoiceMaster Interface") ||
+          await findBotMessage(channel, "VoiceMaster");
+        if (message && !deferExistingEdit) await message.edit(payload);
+      }
+      if (!message) {
+        message = await channel.send(payload);
+        createdMessage = true;
+      }
+      return { text: channel, message, payload, createdChannel, createdMessage };
+    } catch (error) {
+      if (createdChannel) {
+        await channel.delete("VoiceMaster: failed to create persistent interface").catch((deleteError) => {
+          console.error(`[server interface rollback] ${channel.id}`, deleteError);
+        });
+      }
+      throw error;
+    }
+  })();
+  serverInterfaceTasks.set(guild.id, task);
+  try {
+    return await task;
+  } finally {
+    serverInterfaceTasks.delete(guild.id);
+  }
+}
+
+async function cleanupEmptyTempChannels(guild) {
+  const rows = db.getTempChannels(guild.id);
+  const config = db.getConfig(guild.id);
+  let nextIndex = 0;
+  const workers = Array.from({ length: Math.min(8, rows.length) }, async () => {
+    while (nextIndex < rows.length) {
+      const row = rows[nextIndex++];
+      try {
+        await withChannelLock(row.channel_id, () => cleanupTempChannelUnlocked(guild, row, config));
+      } catch (error) {
+        logThrottledError(`temp-cleanup:${guild.id}`, `[temp cleanup] ${row.channel_id}`, error);
+      }
+    }
+  });
+  await Promise.all(workers);
+}
+
+async function cleanupTempChannelUnlocked(guild, row, config = db.getConfig(guild.id)) {
+  try {
+    row = db.getTempChannel(row.channel_id);
+    if (!row) return;
+    if (row.channel_id === config?.j2c_channel_id) return;
+    let channel = guild.channels.cache.get(row.channel_id);
+    if (!channel) {
+      channel = await guild.channels.fetch(row.channel_id).catch((error) => {
+        if (error.code === 10003) return null;
+        throw error;
+      });
+    }
+    if (!channel || channel.type !== ChannelType.GuildVoice) {
+      db.markTempDeleted(row.channel_id);
+      return;
+    }
+    if (channel.members.size > 0) {
+      if (row.empty_since !== null) db.setEmptySince(row.channel_id, null);
+      if (row.owner_id && !channel.members.has(row.owner_id)) db.clearOwner(row.channel_id, row.owner_id);
+      return;
+    }
+
+    const emptySince = row.empty_since ?? Date.now();
+    if (row.empty_since === null) db.setEmptySince(row.channel_id, emptySince);
+    const cleanupMs = Math.max(0, config?.cleanup_seconds ?? 0) * 1000;
+    if (Date.now() - emptySince < cleanupMs || channel.members.size > 0) return;
+
+    await channel.delete("VoiceMaster: empty temporary channel cleanup");
+    db.markTempDeleted(row.channel_id);
+  } catch (error) {
+    logThrottledError(`temp-cleanup:${guild.id}`, `[temp cleanup] ${row.channel_id}`, error);
+  }
+}
+
+async function cleanupTempChannel(guild, channelId) {
+  return withChannelLock(channelId, async () => {
+    const row = db.getTempChannel(channelId);
+    if (row) await cleanupTempChannelUnlocked(guild, row, db.getConfig(guild.id));
+  });
+}
+
+async function reconcileGuild(guild, { tempBatchSize = Infinity, cursor = 0 } = {}) {
+  const config = db.getConfig(guild.id);
+  if (!config) return 0;
+  if (config.server_interface_enabled) {
+    try {
+      const existing = guild.channels.cache.get(config.server_interface_channel_id) ||
+        await guild.channels.fetch(config.server_interface_channel_id).catch((error) => {
+        if (error.code === 10003) return null;
+        throw error;
+      });
+      let messageMissing = !existing || !config.server_interface_message_id;
+      if (existing && config.server_interface_message_id) {
+        await existing.messages.fetch(config.server_interface_message_id).catch((error) => {
+          if (error.code === 10008) {
+            messageMissing = true;
+            return null;
+          }
+          throw error;
+        });
+      }
+      if (messageMissing) {
+        const serverInterface = await createServerInterface(guild, config, config);
+        db.updateServerInterface(guild.id, serverInterface.text.id, serverInterface.message.id);
+      }
+    } catch (error) {
+      logThrottledError(`server-interface-recovery:${guild.id}`, `[server interface recovery] ${guild.id}`, error);
+    }
+  }
+
+  const allRows = db.getTempChannels(guild.id);
+  const rows = allRows.length > tempBatchSize
+    ? Array.from({ length: Math.min(tempBatchSize, allRows.length) }, (_, index) =>
+      allRows[(cursor + index) % allRows.length]
+    )
+    : allRows;
+  let nextIndex = 0;
+  const workers = Array.from({ length: Math.min(8, rows.length) }, async () => {
+    while (nextIndex < rows.length) {
+      const row = rows[nextIndex++];
+      await withChannelLock(row.channel_id, async () => {
+        try {
+          const channel = guild.channels.cache.get(row.channel_id) ||
+            await guild.channels.fetch(row.channel_id).catch((error) => {
+              if (error.code === 10003) return null;
+              throw error;
+            });
+          if (!channel || channel.type !== ChannelType.GuildVoice) {
+            db.markTempDeleted(row.channel_id);
+            return;
+          }
+          if (row.owner_id && !channel.members.has(row.owner_id)) db.clearOwner(row.channel_id, row.owner_id);
+          if (channel.members.size === 0 && row.empty_since === null) {
+            db.setEmptySince(row.channel_id, Date.now());
+          } else if (channel.members.size > 0 && row.empty_since !== null) {
+            db.setEmptySince(row.channel_id, null);
+          }
+          let interfaceMissing = !row.interface_message_id;
+          if (row.interface_message_id) {
+            await channel.messages.fetch(row.interface_message_id).catch((error) => {
+              if (error.code === 10008) {
+                interfaceMissing = true;
+                return null;
+              }
+              throw error;
+            });
+          }
+          if (interfaceMissing) {
+            await renderVoiceChannelInterface(channel, row.owner_id, row.interface_message_id, true);
+          }
+        } catch (error) {
+          logThrottledError(
+            `temp-interface-recovery:${guild.id}`,
+            `[temp interface recovery] ${row.channel_id}`,
+            error
+          );
+        }
+      });
+    }
+  });
+  await Promise.all(workers);
+  return allRows.length > 0 ? (cursor + rows.length) % allRows.length : 0;
+}
+
+module.exports = {
+  createServerInterface,
+  createTempChannel,
+  cleanupEmptyTempChannels,
+  cleanupTempChannel,
+  renderVoiceChannelInterface,
+  buildVoiceChannelInterfacePayload,
+  ensureTempInterface: renderVoiceChannelInterface,
+  reconcileGuild,
+  panelEmbed,
+  panelRows,
+  reserveTempCategory,
+  configuredCategoryIds,
+  categoryOverflowThreshold,
+  DEFAULT_CATEGORY_OVERFLOW_THRESHOLD,
+  VC_INTERFACE_ICONS,
+  getInterfaceEmojiStrings
+};
