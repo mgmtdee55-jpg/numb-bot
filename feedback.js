@@ -1,7 +1,8 @@
 const { EmbedBuilder } = require("discord.js");
 
-const CONFIRM_ID = "1511840843198107839";
-const ERROR_ID = "1511840844276039811";
+const CONFIRM_ID = "1557010270428078200";
+const ERROR_ID = "1557010271753736214";
+const knownEmojis = new Map();
 const OK_COLOR = 0x57f287;
 const ERROR_COLOR = 0xed4245;
 
@@ -33,9 +34,43 @@ const PLAIN_TITLES = new Set([
   "commands"
 ]);
 
+function storeEmoji(emoji) {
+  if (!emoji?.id || typeof emoji.toString !== "function") return;
+  knownEmojis.set(String(emoji.id), emoji.toString());
+}
+
+function findEmoji(guild, id) {
+  const client = guild?.client;
+  return guild?.emojis?.cache?.get?.(id)
+    || client?.application?.emojis?.cache?.get?.(id)
+    || [...(client?.guilds?.cache?.values?.() || [])]
+      .map((entry) => entry.emojis?.cache?.get?.(id))
+      .find(Boolean)
+    || null;
+}
+
+async function loadEmojis(client) {
+  try {
+    await client.application?.fetch?.();
+    const emojis = await client.application?.emojis?.fetch?.();
+    emojis?.forEach?.(storeEmoji);
+  } catch (error) {
+    console.error("[emojis]", error);
+  }
+  for (const guild of client.guilds?.cache?.values?.() || []) {
+    guild.emojis?.cache?.forEach?.(storeEmoji);
+  }
+}
+
 function customEmoji(guild, id, name) {
-  const cached = guild?.emojis?.cache?.get?.(id);
-  if (cached && typeof cached.toString === "function") return cached.toString();
+  const saved = knownEmojis.get(String(id));
+  if (saved) return saved;
+  const found = findEmoji(guild, id);
+  if (found?.toString) {
+    const text = found.toString();
+    knownEmojis.set(String(id), text);
+    return text;
+  }
   return `<:${name}:${id}>`;
 }
 
@@ -108,6 +143,7 @@ module.exports = {
   ERROR_COLOR,
   confirm,
   errorMark,
+  loadEmojis,
   present,
   card,
   heading

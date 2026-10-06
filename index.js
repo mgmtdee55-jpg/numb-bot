@@ -25,7 +25,7 @@ const { startTempbanScheduler, enforceHardban, enforceForeverban, restoreForever
 const vouch = require("./vouch");
 const systems = require("./systems");
 const afk = require("./afk");
-const { card } = require("./feedback");
+const { card, loadEmojis } = require("./feedback");
 let cleanupRunning = false;
 let recoveryRunning = false;
 const recoveryCursors = new Map();
@@ -47,6 +47,7 @@ systems.bindClient(client);
 client.once("clientReady", async () => {
   console.log(`Logged in as ${client.user.tag}`);
   try {
+    await loadEmojis(client);
     startTempbanScheduler(client);
     await vouch.reconcileAll(client);
     for (const guild of client.guilds.cache.values()) {

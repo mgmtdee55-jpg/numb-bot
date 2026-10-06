@@ -267,7 +267,7 @@ test("-vc shows the shared personal interface only for the current managed VC", 
   const outside = makeMember(guild, guild.ownerId);
   const outsideMessage = makeMessage(guild, "-vc", outside, outside);
   await handleCommand(outsideMessage, null, "-");
-  assert.match(outsideMessage.replies[0].embeds[0].data.description, /<:error:1511840844276039811> \*\*Not In VC\*\*\nyour not in a vc channel created by spanter buddy/);
+  assert.match(outsideMessage.replies[0].embeds[0].data.description, /<:error:1557010271753736214> \*\*Not In VC\*\*\nyour not in a vc channel created by spanter buddy/);
 
   const owner = makeMember(guild, "212121212121212121");
   const channel = makeVoiceChannel(guild, "vc-personal-interface-channel", [owner]);
