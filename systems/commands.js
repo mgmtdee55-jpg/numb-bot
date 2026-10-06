@@ -475,7 +475,7 @@ async function restart(message) {
   }
   await reply(message, "Restarting", "The bot is shutting down so the process manager can start it again.");
   if (!process.env.NODE_TEST_CONTEXT) {
-    const timer = setTimeout(() => process.exit(0), 400);
+    const timer = setTimeout(() => process.exit(1), 400);
     timer.unref?.();
   }
   return true;

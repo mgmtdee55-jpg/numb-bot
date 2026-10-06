@@ -43,19 +43,26 @@ const client = new Client({
 
 systems.bindClient(client);
 
-client.once("ready", async () => {
+client.once("clientReady", async () => {
   console.log(`Logged in as ${client.user.tag}`);
-  startTempbanScheduler(client);
-  await vouch.reconcileAll(client);
-  for (const guild of client.guilds.cache.values()) {
-    try {
-      await reconcileGuild(guild);
-      await cleanupEmptyTempChannels(guild);
-    } catch (error) {
-      console.error(`[startup recovery] ${guild.id}`, error);
+  try {
+    startTempbanScheduler(client);
+    await vouch.reconcileAll(client);
+    for (const guild of client.guilds.cache.values()) {
+      try {
+        await reconcileGuild(guild);
+        await cleanupEmptyTempChannels(guild);
+      } catch (error) {
+        console.error(`[startup recovery] ${guild.id}`, error);
+      }
     }
+  } catch (error) {
+    console.error("[startup]", error);
   }
 });
+
+client.on("error", (error) => console.error("[discord]", error));
+client.on("shardError", (error) => console.error("[discord shard]", error));
 
 client.on("messageCreate", async (message) => {
   if (!message.guild || message.author.bot) return;
@@ -232,12 +239,20 @@ const recoveryTimer = setInterval(async () => {
 }, 60000);
 recoveryTimer.unref?.();
 
+process.on("unhandledRejection", (error) => {
+  console.error("[unhandled]", error);
+});
+
 if (!process.env.DISCORD_TOKEN) {
-  console.error("DISCORD_TOKEN is required. Copy .env.example to .env and add your bot token.");
-  process.exitCode = 1;
+  console.error("DISCORD_TOKEN is required. Set it in the environment before starting the bot.");
+  process.exit(1);
 } else {
   client.login(process.env.DISCORD_TOKEN).catch((error) => {
     console.error("[login]", error);
-    process.exitCode = 1;
+    const message = String(error?.message || error);
+    if (/disallowed intents/i.test(message)) {
+      console.error("Enable Message Content Intent and Server Members Intent in the Discord Developer Portal.");
+    }
+    process.exit(1);
   });
 }

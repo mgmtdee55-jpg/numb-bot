@@ -2,10 +2,27 @@ const fs = require("fs");
 const path = require("path");
 const Database = require("better-sqlite3");
 
-const dbPath = process.env.DB_PATH || "./data/vc.sqlite";
+function resolveDbPath(input) {
+  const target = input || "./data/vc.sqlite";
+  try {
+    if (fs.existsSync(target) && fs.statSync(target).isDirectory()) return path.join(target, "vc.sqlite");
+  } catch {
+    return target;
+  }
+  if (target.endsWith("/") || target.endsWith("\\")) return path.join(target, "vc.sqlite");
+  return target;
+}
+
+const dbPath = resolveDbPath(process.env.DB_PATH);
 fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 
-const db = new Database(dbPath);
+let db;
+try {
+  db = new Database(dbPath);
+} catch (error) {
+  console.error(`Unable to open the database at ${dbPath}.`, error);
+  process.exit(1);
+}
 db.pragma("journal_mode = WAL");
 db.pragma("busy_timeout = 5000");
 
