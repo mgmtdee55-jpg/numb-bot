@@ -115,12 +115,14 @@ function botText(prefix) {
     `\`${p}afk [status]\` — set an away status`,
     `\`${p}afk mentions\` — who mentioned you while you were away`,
     `\`${p}instagram <username>\` / \`${p}ig\` / \`${p}insta\``,
+    `\`${p}tiktok <username>\``,
     `\`${p}roblox <username>\``,
     `\`${p}giveaways start [#channel] <duration> <winners> <prize>\``,
     `\`${p}giveaways reroll [message link] [winners]\``,
     `\`${p}set gw host @role\``,
     `\`${p}restart\` — Founders, Gods, and the server owner`,
-    `\`${p}modsetup\` — Gods set vouch, voice ranks, and logs`
+    `\`${p}modsetup\` — Gods set vouch, voice ranks, and numb bot logs`,
+    `\`${p}modlogreset\` — clear saved log channels and set them up again`
   ].join("\n");
 }
 
@@ -196,10 +198,13 @@ function loggingText(prefix) {
     `\`${p}logging test <category>\``,
     `\`${p}logging help\``,
     "",
-    "Event categories: message, voice, channel, role, server, member",
-    "Anti-Nuke and vouch commands use a separate channel: `antinuke`",
+    "Event categories: message, role, server, member",
+    "Bans, kicks, timeouts, and unbans share `punishments`.",
+    "Vouches, giver changes, and Anti-Nuke actions share `antinuke`.",
     `\`${p}logging set antinuke [#channel]\``,
-    "`all` does not change the Anti-Nuke log.",
+    `\`${p}logging set punishments [#channel]\``,
+    "`all` does not change the Anti-Nuke or punishment log.",
+    `\`${p}modlogreset\` clears the saved channels so \`${p}modsetup\` can place them again.`,
     `Alias: \`${p}logs\``
   ].join("\n");
 }

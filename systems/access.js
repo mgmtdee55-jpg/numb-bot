@@ -54,7 +54,7 @@ const STAFF = [
   { key: "god", label: "God", title: "Root Owner", command: "ceo" }
 ];
 
-const LOG_CATEGORIES = ["message", "voice", "channel", "role", "server", "member"];
+const LOG_CATEGORIES = ["message", "role", "server", "member"];
 const ANTINUKE_LOG = "antinuke";
 const PUNISHMENT_LOG = "punishments";
 

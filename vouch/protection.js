@@ -257,6 +257,7 @@ async function enforceRoles(oldMember, newMember) {
         continue;
       }
       if (vouchRoleId && roleId === vouchRoleId && !store.getActiveVouch(guild.id, newMember.id)) {
+        if (store.isLegacyHolder(guild.id, roleId, newMember.id)) continue;
         toRemove.push(roleId);
         violations.push({ action: "unauthorized_role_add", roleId, reason: "Vouch role added without an active vouch" });
       }

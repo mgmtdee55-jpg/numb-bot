@@ -75,7 +75,11 @@ async function logBan(guild, userId, options = {}) {
 
 async function logKick(guild, userId, options = {}) {
   if (options.wait !== 0) await sleep(options.wait ?? 1200);
-  const entry = await auditEntry(guild, AuditLogEvent.MemberKick, userId);
+  let entry = await auditEntry(guild, AuditLogEvent.MemberKick, userId);
+  if (!entry && options.wait !== 0) {
+    await sleep(1500);
+    entry = await auditEntry(guild, AuditLogEvent.MemberKick, userId);
+  }
   if (!entry) return false;
   return postPunishment(guild, "Kick", userId, {
     moderatorId: entry.executorId || entry.executor?.id || null,
@@ -98,4 +102,14 @@ async function logTimeout(guild, userId, untilTimestamp, cleared, options = {}) 
   });
 }
 
-module.exports = { logBan, logKick, logTimeout };
+async function logUnban(guild, userId, options = {}) {
+  if (options.wait !== 0) await sleep(options.wait ?? 1200);
+  const entry = await auditEntry(guild, AuditLogEvent.MemberBanRemove, userId);
+  return postPunishment(guild, "Unban", userId, {
+    moderatorId: entry?.executorId || entry?.executor?.id || null,
+    reason: entry?.reason,
+    when: entry?.createdTimestamp
+  });
+}
+
+module.exports = { logBan, logKick, logTimeout, logUnban };

@@ -14,8 +14,9 @@ const { aliasCommand } = require("../vouch/settings");
 const vouchStore = require("../vouch/store");
 const giveaways = require("../giveaways");
 const { previewEmbed, panelPayload } = require("../embed-panel");
-const { robloxEmbed, instagramEmbed } = require("../profiles");
+const { robloxEmbed, instagramEmbed, tiktokEmbed, parseInstagramHtml, parseTikTokHtml } = require("../profiles");
 const vcConfig = require("../vc-config");
+const { editedCommandContent } = require("../commands");
 
 const GUILD = "extras-guild";
 const OWNER = "111000000000000001";
@@ -154,6 +155,17 @@ test("giveaway draws skip the host and previous winners and ping the new winner"
   assert.match(embed.data.description, /Host: <@9>/);
 });
 
+test("an edited message is a command only when the prefix text changed", () => {
+  const author = { id: "1", bot: false };
+  const guild = { id: "g" };
+  const before = { guild, author, content: "-vocuch give <@2>" };
+  const after = { guild, author, content: "-vouch give <@2>" };
+  assert.equal(editedCommandContent(before, after, "-"), "-vouch give <@2>");
+  assert.equal(editedCommandContent(after, after, "-"), "");
+  assert.equal(editedCommandContent(before, { ...after, content: "hello" }, "-"), "");
+  assert.equal(editedCommandContent(before, { ...after, author: { id: "1", bot: true } }, "-"), "");
+});
+
 test("embed preview keeps emoji text and profile embeds include a profile button", () => {
   const draft = { author: "Dee", description: "hello <:wave:123> 🎉", footer: "footer" };
   const preview = previewEmbed(draft).data;
@@ -177,8 +189,11 @@ test("embed preview keeps emoji text and profile embeds include a profile button
     groups: 23,
     avatar: "https://cdn.example/roblox.png"
   });
-  assert.match(roblox.embeds[0].data.description, /Display: act/);
-  assert.match(roblox.embeds[0].data.description, /User ID: 3133917297/);
+  const robloxText = roblox.embeds[0].data.description;
+  assert.match(roblox.embeds[0].data.title, /act \(@MyActivist\)/);
+  assert.match(robloxText, /Created December 12, 2021 \(5 years ago\) · Offline/);
+  assert.match(robloxText, /Friends 39 · Followers 0 · Following 0 · Groups 23/);
+  assert.match(robloxText, /ID 3133917297/);
   assert.equal(roblox.components[0].components[0].data.label, "View Profile");
   assert.match(roblox.components[0].components[0].data.url, /3133917297/);
 
@@ -189,10 +204,34 @@ test("embed preview keeps emoji text and profile embeds include a profile button
     following: 3,
     posts: 4,
     bio: "hi",
-    avatar: "https://cdn.example/ig.png"
+    avatar: "https://cdn.example/ig.png",
+    private: true
   });
-  assert.match(instagram.embeds[0].data.description, /Followers: 12/);
+  assert.match(instagram.embeds[0].data.description, /@spanter · Private/);
+  assert.match(instagram.embeds[0].data.description, /12 followers · 3 following · 4 posts/);
   assert.equal(instagram.components[0].components[0].data.label, "View Profile");
+
+  const parsed = parseInstagramHtml(`{"xig_user_by_igid_v2":{"full_name":"slimeballa","username":"igotblue100s","biography":"hello","is_verified":false,"follower_count":921,"following_count":152,"profile_pic_url":"https://cdn.example/ig.jpg","is_private":true}}`, "igotblue100s");
+  assert.equal(parsed.private, true);
+  assert.equal(parsed.followers, 921);
+  assert.equal(parsed.name, "slimeballa");
+
+  const tiktok = tiktokEmbed({
+    username: "tiktok",
+    name: "TikTok",
+    followers: 10,
+    following: 1,
+    likes: 20,
+    videos: 2,
+    bio: "next",
+    avatar: "https://cdn.example/tt.png"
+  });
+  assert.match(tiktok.embeds[0].data.description, /10 followers · 1 following · 20 likes · 2 videos/);
+  assert.match(tiktok.components[0].components[0].data.url, /tiktok\.com\/@tiktok/);
+  const tiktokParsed = parseTikTokHtml(`{"userInfo":{"user":{"uniqueId":"tiktok","nickname":"TikTok","signature":"hi","avatarLarger":"https://cdn.example/tt.png","verified":true,"privateAccount":true},"stats":{"followerCount":5,"followingCount":1,"heartCount":9,"videoCount":2}}}`);
+  assert.equal(tiktokParsed.private, true);
+  assert.equal(tiktokParsed.followers, 5);
+  assert.equal(tiktokParsed.name, "TikTok");
 });
 
 test("voice configuration is visible to gods and owners and hidden from everyone else", async () => {

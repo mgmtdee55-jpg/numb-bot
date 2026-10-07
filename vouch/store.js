@@ -16,6 +16,19 @@ CREATE TABLE IF NOT EXISTS command_aliases (
   PRIMARY KEY (guild_id, shortcut)
 );
 
+CREATE TABLE IF NOT EXISTS vouch_legacy (
+  guild_id TEXT NOT NULL,
+  role_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  PRIMARY KEY (guild_id, role_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS vouch_legacy_snapshot (
+  guild_id TEXT NOT NULL,
+  role_id TEXT NOT NULL,
+  PRIMARY KEY (guild_id, role_id)
+);
+
 CREATE TABLE IF NOT EXISTS vouch_config (
   guild_id TEXT PRIMARY KEY,
   vouch_role_id TEXT,
@@ -391,6 +404,13 @@ function allowance(guildId, userId) {
   return { max, used, remaining: Math.max(0, max - used), custom: !!statements.getAllowance.get(key(guildId), key(userId)) };
 }
 
+const legacy = {
+  has: connection.prepare("SELECT 1 AS ok FROM vouch_legacy_snapshot WHERE guild_id=? AND role_id=?"),
+  mark: connection.prepare("INSERT OR IGNORE INTO vouch_legacy_snapshot(guild_id, role_id) VALUES(?,?)"),
+  add: connection.prepare("INSERT OR IGNORE INTO vouch_legacy(guild_id, role_id, user_id) VALUES(?,?,?)"),
+  is: connection.prepare("SELECT 1 AS ok FROM vouch_legacy WHERE guild_id=? AND role_id=? AND user_id=?")
+};
+
 module.exports = {
   DEFAULT_ALLOWANCE,
   checkpoint() {
@@ -440,6 +460,18 @@ module.exports = {
   },
   setLogChannel(guildId, channelId) {
     setConfigField(guildId, "log_channel_id", channelId);
+  },
+  hasLegacySnapshot(guildId, roleId) {
+    return !!legacy.has.get(key(guildId), key(roleId));
+  },
+  markLegacySnapshot(guildId, roleId) {
+    legacy.mark.run(key(guildId), key(roleId));
+  },
+  addLegacyHolder(guildId, roleId, userId) {
+    legacy.add.run(key(guildId), key(roleId), key(userId));
+  },
+  isLegacyHolder(guildId, roleId, userId) {
+    return !!legacy.is.get(key(guildId), key(roleId), key(userId));
   },
   addOs(guildId, targetId, targetType, addedBy) {
     return statements.addOs.run(key(guildId), key(targetId), targetType, addedBy == null ? null : String(addedBy), Date.now()).changes > 0;

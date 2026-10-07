@@ -767,3 +767,23 @@ test("reconcile restores a reserved vouch after a restart window and does not du
   assert.equal(duplicate.ok, false);
   assert.equal(duplicate.code, "active");
 });
+
+test("members who already had the vouch role keep it", async () => {
+  const group = cast();
+  await authorize(group);
+  setRoleIds(group.other, [MEMBER_ROLE, VOUCH_ROLE]);
+  await vouch.reconcileGuild(group.guild);
+  assert.equal(group.other.roles.cache.has(VOUCH_ROLE), true);
+  assert.equal(vouch.store.isLegacyHolder(group.guild.id, VOUCH_ROLE, OTHER), true);
+  await vouch.reconcileGuild(group.guild);
+  assert.equal(group.other.roles.cache.has(VOUCH_ROLE), true);
+
+  group.plain.roles.cache.set(STAFF_ROLE, group.guild.roles.cache.get(STAFF_ROLE));
+  vouch.protection.resetRuntime();
+  await emit(group.target, [MEMBER_ROLE], [MEMBER_ROLE, VOUCH_ROLE], {
+    executor: { id: PLAIN, bot: false },
+    roleId: VOUCH_ROLE
+  });
+  assert.equal(group.target.roles.cache.has(VOUCH_ROLE), false);
+  assert.equal(group.other.roles.cache.has(VOUCH_ROLE), true);
+});

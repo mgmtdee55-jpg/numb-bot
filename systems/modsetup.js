@@ -1,9 +1,9 @@
-const { ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelSelectMenuBuilder, ChannelType, MessageFlags, StringSelectMenuBuilder } = require("discord.js");
+const { ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags, StringSelectMenuBuilder } = require("discord.js");
 const store = require("./store");
 const access = require("./access");
 const vouchStore = require("../vouch/store");
-const { bindAntinukeLog } = require("./logs");
-const { ANTINUKE_LOG, LOG_CATEGORIES, PUNISHMENT_LOG } = access;
+const { bindAntinukeLog, ensureNumbLogs } = require("./logs");
+const { PUNISHMENT_LOG } = access;
 const { reply, embed } = require("../vouch/ui");
 
 const STEPS = [
@@ -11,9 +11,8 @@ const STEPS = [
   { key: "premiumplus", label: "Voice Premium Plus", createName: "Voice Premium Plus" },
   { key: "premium", label: "Voice Premium", createName: "Voice Premium" },
   { key: "plus", label: "Voice Plus", createName: "Voice Plus" },
-  { key: "logs", label: "Event log channels", createName: "Spanter Logs" },
-  { key: "antinuke", label: "Anti-Nuke and vouch log", createName: "antinuke-logs" },
-  { key: "punishments", label: "Kick, ban, and timeout log", createName: "punishment-logs" }
+  { key: "logs", label: "numb bot logs" },
+  { key: "ping", label: "Anti-Nuke ping role" }
 ];
 
 function sessionKey(guildId, userId) {
@@ -45,39 +44,8 @@ async function createNamedRole(guild, name) {
   return guild.roles.create({ name, reason: "Mod setup" });
 }
 
-async function createLogChannels(guild) {
-  if (typeof guild.channels?.create !== "function") return 0;
-  const category = await guild.channels.create({
-    name: "Spanter Logs",
-    type: ChannelType.GuildCategory,
-    reason: "Mod setup"
-  });
-  let count = 0;
-  for (const categoryName of access.LOG_CATEGORIES) {
-    const channel = await guild.channels.create({
-      name: `${categoryName}-logs`,
-      type: ChannelType.GuildText,
-      parent: category?.id,
-      reason: "Mod setup"
-    });
-    store.setLog(guild.id, categoryName, channel.id);
-    count += 1;
-  }
-  return count;
-}
-
-function logCategory(guild) {
-  return [...guild.channels.cache.values()].find((channel) => channel.name === "Spanter Logs" && channel.type === ChannelType.GuildCategory);
-}
-
-async function createNamedLog(guild, name) {
-  if (typeof guild.channels?.create !== "function") return null;
-  return guild.channels.create({
-    name,
-    type: ChannelType.GuildText,
-    parent: logCategory(guild)?.id,
-    reason: "Mod setup"
-  });
+function logsReady(guildId) {
+  return !!store.getLog(guildId, PUNISHMENT_LOG) || !!store.getLog(guildId, "antinuke");
 }
 
 function roleOptions(guild) {
@@ -88,63 +56,41 @@ function roleOptions(guild) {
     .map((role) => ({ label: role.name.slice(0, 100), value: role.id }));
 }
 
-function eventLogs(guildId) {
-  return store.listLogs(guildId).filter((row) => LOG_CATEGORIES.includes(row.category));
-}
-
 function componentsFor(step, guild) {
   const rows = [];
-  if (!["logs", "antinuke", "punishments"].includes(step.key)) {
+  if (step.key !== "logs") {
     const options = roleOptions(guild);
     if (options.length) {
       rows.push(new ActionRowBuilder().addComponents(
         new StringSelectMenuBuilder()
           .setCustomId(`spanter:modsetup:pick:${step.key}`)
-          .setPlaceholder(`Choose the ${step.label}`)
+          .setPlaceholder(step.key === "ping" ? "Choose the role to ping" : `Choose the ${step.label}`)
           .addOptions(options)
       ));
     }
   }
-  if (step.key === "antinuke" || step.key === "punishments") {
-    rows.push(new ActionRowBuilder().addComponents(
-      new ChannelSelectMenuBuilder()
-        .setCustomId(`spanter:modsetup:channel:${step.key}`)
-        .setPlaceholder(step.key === "antinuke" ? "Choose the Anti-Nuke log channel" : "Choose the punishment log channel")
-        .setChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
-    ));
-  }
-  const createLabel = step.key === "logs"
-    ? "Create event logs"
-    : step.key === "antinuke"
-      ? "Create antinuke-logs"
-      : step.key === "punishments"
-        ? "Create punishment-logs"
-        : "Create for me";
-  const buttons = [
-    new ButtonBuilder()
-      .setCustomId(`spanter:modsetup:create:${step.key}`)
-      .setLabel(createLabel)
-      .setStyle(ButtonStyle.Primary)
-  ];
+  const buttons = [];
   if (step.key === "logs") {
     buttons.push(new ButtonBuilder()
-      .setCustomId("spanter:modsetup:here:logs")
-      .setLabel("Use this channel for event logs")
-      .setStyle(ButtonStyle.Secondary));
-  }
-  if (step.key === "antinuke" || step.key === "punishments") {
+      .setCustomId("spanter:modsetup:create:logs")
+      .setLabel("Create numb bot logs")
+      .setStyle(ButtonStyle.Primary));
+  } else if (step.key === "ping") {
     buttons.push(new ButtonBuilder()
-      .setCustomId(`spanter:modsetup:here:${step.key}`)
-      .setLabel("Use this channel")
+      .setCustomId("spanter:modsetup:skip:ping")
+      .setLabel("Don't ping")
       .setStyle(ButtonStyle.Secondary));
+  } else {
+    buttons.push(new ButtonBuilder()
+      .setCustomId(`spanter:modsetup:create:${step.key}`)
+      .setLabel("Create for me")
+      .setStyle(ButtonStyle.Primary));
   }
   const existing = step.key === "logs"
-    ? eventLogs(guild.id).length > 0
-    : step.key === "antinuke"
-      ? store.getLog(guild.id, ANTINUKE_LOG) || vouchStore.getConfig(guild.id).log_channel_id
-      : step.key === "punishments"
-        ? store.getLog(guild.id, PUNISHMENT_LOG)
-        : currentRoleId(guild.id, step.key);
+    ? logsReady(guild.id)
+    : step.key === "ping"
+      ? store.getAntinukePing(guild.id)
+      : currentRoleId(guild.id, step.key);
   if (existing) {
     buttons.push(new ButtonBuilder()
       .setCustomId(`spanter:modsetup:keep:${step.key}`)
@@ -157,28 +103,27 @@ function componentsFor(step, guild) {
 
 function stepEmbed(guild, index) {
   const step = STEPS[index];
-  const antinukeId = store.getLog(guild.id, ANTINUKE_LOG) || vouchStore.getConfig(guild.id).log_channel_id;
-  const punishmentId = store.getLog(guild.id, PUNISHMENT_LOG);
+  const configured = new Map(store.listLogs(guild.id).map((row) => [row.category, row.channel_id]));
+  const logLines = ["punishments", "antinuke", "message", "role", "server", "member"]
+    .map((category) => `**${category}** ${configured.get(category) ? `<#${configured.get(category)}>` : "not set"}`)
+    .join("\n");
+  const pingRole = store.getAntinukePing(guild.id);
   const existing = step.key === "logs"
-    ? eventLogs(guild.id).map((row) => `**${row.category}** <#${row.channel_id}>`).join("\n")
-    : step.key === "antinuke"
-      ? antinukeId
-      : step.key === "punishments"
-        ? punishmentId
-        : currentRoleId(guild.id, step.key);
+    ? logLines
+    : step.key === "ping"
+      ? pingRole
+      : currentRoleId(guild.id, step.key);
   const lines = [
     `Step **${index + 1}** of **${STEPS.length}**: **${step.label}**`,
     "",
     step.key === "logs"
-      ? "These are message, voice, channel, role, server, and member logs. Anti-Nuke and the punishment log are separate steps."
-      : step.key === "antinuke"
-        ? "Vouch, Anti-Nuke admin, staff rank, and role-limit actions use this channel only."
-        : step.key === "punishments"
-          ? "Kicks, bans, and timeouts are posted here with the moderator, the reason, and the time. Event logs and Anti-Nuke stay in their own channels."
-          : `Mention is not required. Choose an existing role, or I will create **${step.createName}**.`,
+      ? "This creates one **numb bot** category. Bans, kicks, and timeouts share #punishments. Vouches and Anti-Nuke share #antinuke. Role changes share #roles. Running this again reuses those channels."
+      : step.key === "ping"
+        ? "Choose a role to ping on Anti-Nuke and vouch logs. The people named in the log are not pinged."
+        : `Mention is not required. Choose an existing role, or I will create **${step.createName}**.`,
     "",
     existing
-      ? (step.key === "logs" ? `Already set:\n${existing}` : step.key === "punishments" || step.key === "antinuke" ? `Already set: <#${existing}>` : `Already set: <@&${existing}>`)
+      ? (step.key === "logs" ? `Already set:\n${existing}` : `Already set: <@&${existing}>`)
       : "Nothing is set for this step yet."
   ];
   return embed("Mod Setup", lines.join("\n"), true);
@@ -197,7 +142,7 @@ async function advance(interaction, index) {
   if (next >= STEPS.length) {
     sessions.delete(sessionKey(interaction.guild.id, interaction.user.id));
     return interaction.update({
-      embeds: [embed("Mod Setup Complete", "Vouch, voice ranks, event logs, the Anti-Nuke log, and the kick, ban, and timeout log are set. You can rerun `-modsetup` to change them.")],
+      embeds: [embed("Mod Setup Complete", "Vouch, voice ranks, and the numb bot logs are set. Run `-modsetup` again to change them, or `-modlogreset` to clear the saved log channels and start over.")],
       components: []
     });
   }
@@ -217,8 +162,18 @@ async function handleInteraction(interaction) {
     return true;
   }
   const [, , action, key] = customId.split(":");
-  const index = sessions.get(sessionKey(interaction.guild.id, interaction.user.id)) ?? STEPS.findIndex((step) => step.key === key);
-  const step = STEPS.find((item) => item.key === key) || STEPS[index] || STEPS[0];
+  if (!STEPS.some((step) => step.key === key)) {
+    const channelId = action === "here" ? interaction.channelId : interaction.values?.[0];
+    if (channelId && key === "antinuke") bindAntinukeLog(interaction.guild.id, channelId);
+    if (channelId && key === "punishments") store.setLog(interaction.guild.id, PUNISHMENT_LOG, channelId);
+    await interaction.update({
+      embeds: [embed("Setup Updated", "That panel is from an older setup. Run `-modsetup` again. A channel you picked was saved.")],
+      components: []
+    }).catch(() => null);
+    return true;
+  }
+  const index = STEPS.findIndex((step) => step.key === key);
+  const step = STEPS.find((item) => item.key === key);
   try {
     if (action === "pick") {
       const roleId = interaction.values?.[0];
@@ -227,31 +182,18 @@ async function handleInteraction(interaction) {
         await interaction.reply({ embeds: [embed("Missing Role", "That role is no longer in the server.")], flags: MessageFlags.Ephemeral });
         return true;
       }
-      saveRole(interaction.guild.id, step.key, role.id);
-    } else if (action === "channel" && (step.key === "antinuke" || step.key === "punishments")) {
-      const channelId = interaction.values?.[0];
-      if (!channelId) {
-        await interaction.reply({ embeds: [embed("Missing Channel", "Choose a text channel.")], flags: MessageFlags.Ephemeral });
-        return true;
-      }
-      if (step.key === "antinuke") bindAntinukeLog(interaction.guild.id, channelId);
-      else store.setLog(interaction.guild.id, PUNISHMENT_LOG, channelId);
+      if (step.key === "ping") store.setAntinukePing(interaction.guild.id, role.id);
+      else saveRole(interaction.guild.id, step.key, role.id);
+    } else if (action === "skip" && step.key === "ping") {
+      store.setAntinukePing(interaction.guild.id, null);
     } else if (action === "create") {
       if (step.key === "logs") {
-        const count = await createLogChannels(interaction.guild);
+        const count = await ensureNumbLogs(interaction.guild);
         if (!count) {
-          await interaction.reply({ embeds: [embed("Cannot Create Channels", "I could not create log channels. Check Manage Channels.")], flags: MessageFlags.Ephemeral });
+          await interaction.reply({ embeds: [embed("Cannot Create Channels", "I could not create the numb bot logs. Check Manage Channels.")], flags: MessageFlags.Ephemeral });
           return true;
         }
-      } else if (step.key === "antinuke" || step.key === "punishments") {
-        const channel = await createNamedLog(interaction.guild, step.createName);
-        if (!channel) {
-          await interaction.reply({ embeds: [embed("Cannot Create Channels", `I could not create #${step.createName}. Check Manage Channels.`)], flags: MessageFlags.Ephemeral });
-          return true;
-        }
-        if (step.key === "antinuke") bindAntinukeLog(interaction.guild.id, channel.id);
-        else store.setLog(interaction.guild.id, PUNISHMENT_LOG, channel.id);
-      } else {
+      } else if (step.createName) {
         const role = await createNamedRole(interaction.guild, step.createName);
         if (!role) {
           await interaction.reply({ embeds: [embed("Cannot Create Role", "I could not create that role. Check Manage Roles.")], flags: MessageFlags.Ephemeral });
@@ -259,12 +201,6 @@ async function handleInteraction(interaction) {
         }
         saveRole(interaction.guild.id, step.key, role.id);
       }
-    } else if (action === "here" && step.key === "antinuke") {
-      bindAntinukeLog(interaction.guild.id, interaction.channelId);
-    } else if (action === "here" && step.key === "punishments") {
-      store.setLog(interaction.guild.id, PUNISHMENT_LOG, interaction.channelId);
-    } else if (action === "here") {
-      for (const category of LOG_CATEGORIES) store.setLog(interaction.guild.id, category, interaction.channelId);
     }
     await advance(interaction, Math.max(0, index));
   } catch (error) {

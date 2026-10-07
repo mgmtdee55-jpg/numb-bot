@@ -36,6 +36,10 @@ async function handleCommand(message, args, prefix) {
     await profiles.instagram(message, args.slice(1).join(" "));
     return true;
   }
+  if (name === "tiktok") {
+    await profiles.tiktok(message, args.slice(1).join(" "));
+    return true;
+  }
   if (name === "roblox") {
     await profiles.roblox(message, args.slice(1).join(" "));
     return true;

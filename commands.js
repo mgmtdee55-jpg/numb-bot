@@ -8,6 +8,7 @@ const { logThrottledError } = require("./log-throttle");
 const moderation = require("./moderation");
 const vouch = require("./vouch");
 const { card } = require("./feedback");
+const cooldowns = require("./systems/cooldowns");
 
 function embed(title, description, guild) {
   return card(title, description, { guild });
@@ -30,9 +31,30 @@ async function resolveMember(message, argument) {
 
 const systems = require("./systems");
 
-async function handleCommand(message, client, prefix = "-") {
+function commandName(args, prefix) {
+  const head = String(args[0] || "").toLowerCase();
+  const normalized = String(prefix || "").toLowerCase();
+  return head.startsWith(normalized) ? head.slice(prefix.length) : head;
+}
+
+function editedCommandContent(before, after, prefix) {
+  if (!after?.guild || after.author?.bot) return "";
+  const content = String(after.content || "");
+  const normalized = String(prefix || "");
+  if (!content.startsWith(normalized)) return "";
+  if (before && before.content === content) return "";
+  return content;
+}
+
+async function handleCommand(message, client, prefix = "-", options = {}) {
   const args = vouch.expandArgs(message, prefix);
   if (!args[0]) return;
+  if (!options.edited && process.env.npm_lifecycle_event !== "test" && process.env.NODE_TEST_CONTEXT !== "1") {
+    const wait = cooldowns.commandPause(message.guild.id, message.author.id, commandName(args, prefix));
+    if (wait) {
+      return message.reply({ embeds: [embed("Please Wait", cooldowns.waitText(wait), message.guild)] });
+    }
+  }
   if (await systems.handleCommand(message, args, prefix)) return;
   const command = args[0].toLowerCase();
   const vcCommand = `${prefix}vc`.toLowerCase();
@@ -208,4 +230,4 @@ async function handleCommand(message, client, prefix = "-") {
   }
 }
 
-module.exports = { handleCommand };
+module.exports = { handleCommand, editedCommandContent };

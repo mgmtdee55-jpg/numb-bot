@@ -1,19 +1,40 @@
-const { ChannelType } = require("discord.js");
+const { AuditLogEvent, ChannelType } = require("discord.js");
 const store = require("./store");
 const access = require("./access");
 const vouchStore = require("../vouch/store");
 const { embed, reply } = require("../vouch/ui");
 
+const CATEGORY_NAME = "numb bot";
+const LOG_CHANNELS = [
+  ["punishments", "punishments"],
+  ["antinuke", "antinuke"],
+  ["message", "messages"],
+  ["role", "roles"],
+  ["server", "server"],
+  ["member", "members"]
+];
+
 const CATEGORY_HELP = {
   message: "Message edits and deletions",
-  voice: "Voice joins, leaves, moves and state changes",
-  channel: "Channel create, delete and update",
-  role: "Role create, delete and update",
-  server: "Server/guild changes",
-  member: "Member joins, leaves, updates, bans and unbans",
-  antinuke: "Anti-Nuke and vouch commands",
-  punishments: "Kicks, bans, and timeouts"
+  role: "Role create, delete, permissions, and member role changes",
+  server: "Server updates",
+  member: "Joins, leaves, and nickname changes",
+  antinuke: "Vouches, giver changes, and Anti-Nuke actions",
+  punishments: "Bans, kicks, timeouts, and unbans"
 };
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function whenLine(ms) {
+  const unix = Math.floor((ms || Date.now()) / 1000);
+  return `**When:** <t:${unix}:F> (<t:${unix}:R>)`;
+}
+
+function byLine(userId) {
+  return `**By:** ${userId ? `<@${userId}>` : "Unknown"}`;
+}
 
 function bindAntinukeLog(guildId, channelId) {
   if (channelId) {
@@ -150,13 +171,149 @@ async function handleLogging(message, args, prefix) {
   return reply(message, "Event Logging", `Use \`${prefix}logging help\`.`);
 }
 
-async function sendLog(guild, category, description, title) {
+async function sendLog(guild, category, description, title, options = {}) {
   const channelId = store.getLog(guild.id, category);
   if (!channelId) return false;
   const channel = guild.channels.cache.get(channelId) || await guild.channels.fetch(channelId).catch(() => null);
   if (!channel || typeof channel.send !== "function") return false;
-  await channel.send({ embeds: [embed(title || CATEGORY_HELP[category] || category, description, true)] });
+  const pingRoleId = options.ping ? store.getAntinukePing(guild.id) : null;
+  const payload = {
+    embeds: [embed(title || CATEGORY_HELP[category] || category, description, true)],
+    allowedMentions: pingRoleId ? { parse: [], roles: [pingRoleId] } : { parse: [] }
+  };
+  if (pingRoleId) payload.content = `<@&${pingRoleId}>`;
+  await channel.send(payload);
   return true;
 }
 
-module.exports = { handleLogging, sendLog, CATEGORY_HELP, bindAntinukeLog };
+function remember(guild, channel) {
+  if (channel?.id && guild.channels?.cache?.set) guild.channels.cache.set(channel.id, channel);
+  return channel;
+}
+
+async function ensureNumbLogs(guild) {
+  if (typeof guild.channels?.create !== "function") return 0;
+  let category = [...guild.channels.cache.values()].find((channel) =>
+    channel.type === ChannelType.GuildCategory && String(channel.name || "").toLowerCase() === CATEGORY_NAME
+  );
+  if (!category) {
+    category = remember(guild, await guild.channels.create({
+      name: CATEGORY_NAME,
+      type: ChannelType.GuildCategory,
+      reason: "Mod setup"
+    }));
+  }
+  if (!category?.id) return 0;
+  let count = 0;
+  for (const [key, name] of LOG_CHANNELS) {
+    let channel = [...guild.channels.cache.values()].find((item) =>
+      item.parentId === category.id &&
+      item.type === ChannelType.GuildText &&
+      String(item.name || "").toLowerCase() === name
+    );
+    if (!channel) {
+      channel = remember(guild, await guild.channels.create({
+        name,
+        type: ChannelType.GuildText,
+        parent: category.id,
+        reason: "Mod setup"
+      }));
+    }
+    if (!channel?.id) continue;
+    if (key === access.ANTINUKE_LOG) bindAntinukeLog(guild.id, channel.id);
+    else store.setLog(guild.id, key, channel.id);
+    count += 1;
+  }
+  store.removeLog(guild.id, "voice");
+  store.removeLog(guild.id, "channel");
+  return count;
+}
+
+async function recentAudit(guild, type, targetId) {
+  if (typeof guild.fetchAuditLogs !== "function") return null;
+  await sleep(800);
+  const logs = await guild.fetchAuditLogs({ type, limit: 6 }).catch(() => null);
+  const now = Date.now();
+  for (const entry of logs?.entries?.values?.() || []) {
+    if (String(entry.targetId) !== String(targetId)) continue;
+    if (now - (entry.createdTimestamp || 0) > 20000) continue;
+    return entry;
+  }
+  return null;
+}
+
+function actorId(entry) {
+  return entry?.executorId || entry?.executor?.id || null;
+}
+
+async function logRoleCreate(role) {
+  const entry = await recentAudit(role.guild, AuditLogEvent.RoleCreate, role.id);
+  return sendLog(role.guild, "role", [
+    `**Role:** <@&${role.id}>`,
+    byLine(actorId(entry)),
+    whenLine(entry?.createdTimestamp)
+  ].join("\n"), "Role created");
+}
+
+async function logRoleDelete(role) {
+  const entry = await recentAudit(role.guild, AuditLogEvent.RoleDelete, role.id);
+  return sendLog(role.guild, "role", [
+    `**Role:** **${role.name || role.id}**`,
+    byLine(actorId(entry)),
+    whenLine(entry?.createdTimestamp)
+  ].join("\n"), "Role deleted");
+}
+
+async function logRoleUpdate(before, after) {
+  const nameChanged = before.name !== after.name;
+  const beforeBits = before.permissions?.bitfield;
+  const afterBits = after.permissions?.bitfield;
+  const permissionsChanged = beforeBits != null && afterBits != null && String(beforeBits) !== String(afterBits);
+  if (!nameChanged && !permissionsChanged) return false;
+  const entry = await recentAudit(after.guild, AuditLogEvent.RoleUpdate, after.id);
+  return sendLog(after.guild, "role", [
+    `**Role:** <@&${after.id}>`,
+    byLine(actorId(entry)),
+    nameChanged ? `**Name:** **${before.name}** → **${after.name}**` : null,
+    permissionsChanged ? "**Permissions:** changed" : null,
+    entry?.reason ? `**Reason:** ${String(entry.reason).slice(0, 300)}` : null,
+    whenLine(entry?.createdTimestamp)
+  ].filter(Boolean).join("\n"), "Role updated");
+}
+
+function roleIdList(member) {
+  return new Set([...(member.roles?.cache?.keys?.() || [])].filter((id) => id && id !== member.guild?.id));
+}
+
+async function logMemberRoles(before, after) {
+  if (!after?.guild) return false;
+  const previous = roleIdList(before);
+  const current = roleIdList(after);
+  const added = [...current].filter((id) => !previous.has(id));
+  const removed = [...previous].filter((id) => !current.has(id));
+  if (!added.length && !removed.length) return false;
+  const entry = await recentAudit(after.guild, AuditLogEvent.MemberRoleUpdate, after.id);
+  return sendLog(after.guild, "role", [
+    `**Member:** <@${after.id}>`,
+    byLine(actorId(entry)),
+    added.length ? `**Added:** ${added.map((id) => `<@&${id}>`).join(", ")}` : null,
+    removed.length ? `**Removed:** ${removed.map((id) => `<@&${id}>`).join(", ")}` : null,
+    entry?.reason ? `**Reason:** ${String(entry.reason).slice(0, 300)}` : null,
+    whenLine(entry?.createdTimestamp)
+  ].filter(Boolean).join("\n"), "Roles updated");
+}
+
+module.exports = {
+  handleLogging,
+  sendLog,
+  CATEGORY_HELP,
+  CATEGORY_NAME,
+  LOG_CHANNELS,
+  bindAntinukeLog,
+  ensureNumbLogs,
+  logRoleCreate,
+  logRoleDelete,
+  logRoleUpdate,
+  logMemberRoles,
+  whenLine
+};

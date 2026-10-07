@@ -7,7 +7,7 @@ const {
   MessageFlags
 } = require("discord.js");
 const db = require("./db");
-const { handleCommand } = require("./commands");
+const { handleCommand, editedCommandContent } = require("./commands");
 const {
   createTempChannel,
   renderVoiceChannelInterface,
@@ -71,6 +71,28 @@ client.once("clientReady", async () => {
 client.on("error", (error) => console.error("[discord]", error));
 client.on("shardError", (error) => console.error("[discord shard]", error));
 
+const executedCommands = new Map();
+
+function rememberCommand(message) {
+  executedCommands.set(message.id, message.content);
+  if (executedCommands.size <= 4000) return;
+  const oldest = executedCommands.keys().next().value;
+  executedCommands.delete(oldest);
+}
+
+async function runCommand(message, prefix, options) {
+  try {
+    await handleCommand(message, client, prefix, options);
+  } catch (error) {
+    console.error("[command]", error);
+    await message.reply({
+      embeds: [
+        card("Unable to complete", "The command could not be completed. Please check the bot's channel permissions.", { guild: message.guild })
+      ]
+    }).catch((replyError) => console.error("[command error reply]", replyError));
+  }
+}
+
 client.on("messageCreate", async (message) => {
   if (!message.guild || message.author.bot) return;
   await emojisLoaded();
@@ -81,15 +103,23 @@ client.on("messageCreate", async (message) => {
     console.error("[afk]", error);
   }
   if (!message.content.startsWith(prefix)) return;
+  rememberCommand(message);
+  await runCommand(message, prefix);
+});
+
+client.on("messageUpdate", async (before, after) => {
   try {
-    await handleCommand(message, client, prefix);
+    if (after.partial) after = await after.fetch();
+    if (!after?.guild || after.author?.bot) return;
+    if (!after.member) after.member = await after.guild.members.fetch(after.author.id).catch(() => null);
+    await emojisLoaded();
+    const prefix = vouch.getPrefix(after.guild.id);
+    const content = editedCommandContent(before, after, prefix);
+    if (!content || executedCommands.get(after.id) === content) return;
+    rememberCommand(after);
+    await runCommand(after, prefix, { edited: true });
   } catch (error) {
-    console.error("[command]", error);
-    await message.reply({
-      embeds: [
-        card("Unable to complete", "The command could not be completed. Please check the bot's channel permissions.", { guild: message.guild })
-      ]
-    }).catch((replyError) => console.error("[command error reply]", replyError));
+    console.error("[command edit]", error);
   }
 });
 

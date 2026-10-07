@@ -9,6 +9,25 @@ async function memberOf(guild, userId) {
   return guild.members.cache.get(userId) || await guild.members.fetch(userId).catch(() => null);
 }
 
+async function keepExistingHolders(guild, role) {
+  if (store.hasLegacySnapshot(guild.id, role.id)) return true;
+  let fetched = true;
+  if (typeof guild.members?.fetch === "function") {
+    const result = await guild.members.fetch().catch(() => null);
+    if (result == null && (guild.memberCount || 0) > (guild.members.cache?.size || 0) + 5) fetched = false;
+  }
+  if (!fetched) return false;
+  const holders = role.members?.values
+    ? [...role.members.values()]
+    : [...guild.members.cache.values()].filter((member) => member.roles?.cache?.has(role.id));
+  for (const member of holders) {
+    if (!member?.id || member.user?.bot) continue;
+    store.addLegacyHolder(guild.id, role.id, member.id);
+  }
+  store.markLegacySnapshot(guild.id, role.id);
+  return true;
+}
+
 async function reconcileGuild(guild) {
   if (!guild?.id) return;
   const config = store.getConfig(guild.id);
@@ -22,6 +41,7 @@ async function reconcileGuild(guild) {
         automatic: true
       });
     } else {
+      const holdersReady = await keepExistingHolders(guild, role);
       for (const vouch of store.listAllActive(guild.id)) {
         if (store.isRoleStripped(guild.id, vouch.target_id, role.id)) continue;
         if (db.isHardbanned(guild.id, vouch.target_id) || db.isForeverbanned(guild.id, vouch.target_id)) continue;
@@ -36,9 +56,12 @@ async function reconcileGuild(guild) {
       if ((guild.memberCount || 0) <= 1000 && typeof guild.members.fetch === "function") {
         await guild.members.fetch().catch(() => null);
       }
-      const holders = role.members?.values ? [...role.members.values()] : [...guild.members.cache.values()].filter((member) => member.roles?.cache?.has(role.id));
+      const holders = holdersReady
+        ? (role.members?.values ? [...role.members.values()] : [...guild.members.cache.values()].filter((member) => member.roles?.cache?.has(role.id)))
+        : [];
       for (const member of holders) {
         if (member.user?.bot) continue;
+        if (store.isLegacyHolder(guild.id, role.id, member.id)) continue;
         if (!store.getActiveVouch(guild.id, member.id)) {
           await roles.withRateLimit(() => roles.removeRole(member, role, "Remove vouch role without an active vouch")).catch((error) => {
             logThrottledError(`vouch-reconcile-remove:${guild.id}`, `[vouch reconcile] ${member.id}`, error);

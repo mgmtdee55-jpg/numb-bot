@@ -498,7 +498,7 @@ test("showallcommands pages one category at a time", async () => {
     "VC Ranks", "Vouch", "Staff", "Godmode", "Force", "Social", "Vanity", "Giveaways", "Bot"
   ]);
   const text = pages.map((page) => page.description).join("\n");
-  for (const command of ["-ban", "-pban", "-antinuke vouch limit view", "-role limit set", "-nuke", "-ceo add", "-showallcommands", "-instagram", "-giveaways start", "-embedcreate"]) {
+  for (const command of ["-ban", "-pban", "-antinuke vouch limit view", "-role limit set", "-nuke", "-ceo add", "-showallcommands", "-instagram", "-giveaways start", "-embedcreate", "-modlogreset"]) {
     assert.ok(text.includes(`\`${command}\``), command);
   }
   assert.doesNotMatch(text, /vouch check|vouch wipeall|limitedroles|setvouchlogs/);
@@ -589,6 +589,7 @@ test("punishment log records who acted, the reason, and when", async () => {
   const { logBan, logKick, logTimeout } = require("../systems/punishments");
   await logBan(guild, TARGET, { wait: 0 });
   assert.equal(sent[0].embeds[0].data.title, "Ban");
+  assert.deepEqual(sent[0].allowedMentions, { parse: [] });
   assert.match(sent[0].embeds[0].data.description, new RegExp(owner.id));
   assert.match(sent[0].embeds[0].data.description, /spam links/);
   assert.match(sent[0].embeds[0].data.description, /<t:\d+:F>/);
@@ -614,17 +615,27 @@ test("punishment log records who acted, the reason, and when", async () => {
   assert.match(sent[0].embeds[0].data.description, /\*\*Until:\*\*/);
 });
 
-test("mod setup saves the kick, ban, and timeout channel", async () => {
+test("mod setup creates numb bot logs once and asks which role to ping", async () => {
   const modsetup = require("../systems/modsetup");
   const guild = makeGuild();
   const owner = makeMember(guild, OWNER);
+  const created = [];
+  guild.channels.create = async (data) => {
+    const channel = {
+      id: `56100000000000010${created.length}`,
+      name: data.name,
+      type: data.type,
+      parentId: data.parent || null
+    };
+    guild.channels.cache.set(channel.id, channel);
+    created.push(channel);
+    return channel;
+  };
   const interaction = {
-    customId: "spanter:modsetup:channel:punishments",
-    values: ["555000000000000088"],
+    customId: "spanter:modsetup:create:logs",
     member: owner,
     user: owner.user,
     guild,
-    channelId: "555000000000000001",
     replied: false,
     deferred: false,
     async update(payload) {
@@ -635,8 +646,46 @@ test("mod setup saves the kick, ban, and timeout channel", async () => {
     }
   };
   assert.equal(await modsetup.handleInteraction(interaction), true);
-  assert.equal(store.getLog(guild.id, "punishments"), "555000000000000088");
-  assert.equal(embedTitle(interaction.updated.embeds[0]), "Mod Setup Complete");
+  const categories = created.filter((channel) => channel.name === "numb bot");
+  assert.equal(categories.length, 1);
+  assert.equal(store.getLog(guild.id, "punishments"), created.find((channel) => channel.name === "punishments").id);
+  assert.equal(store.getLog(guild.id, "antinuke"), created.find((channel) => channel.name === "antinuke").id);
+  assert.equal(store.getLog(guild.id, "role"), created.find((channel) => channel.name === "roles").id);
+  assert.equal(store.getLog(guild.id, "voice"), null);
+  assert.equal(store.getLog(guild.id, "channel"), null);
+  assert.match(embedTitle(interaction.updated.embeds[0]), /Mod Setup/);
+  assert.match(interaction.updated.embeds[0].data.description, /Anti-Nuke ping role/);
+
+  const again = { ...interaction, updated: null };
+  again.update = async (payload) => {
+    again.updated = payload;
+  };
+  assert.equal(await modsetup.handleInteraction(again), true);
+  assert.equal(created.filter((channel) => channel.name === "numb bot").length, 1);
+  assert.equal(created.length, 7);
+
+  const ping = guild.roles.cache.values().next().value;
+  const picked = {
+    customId: "spanter:modsetup:pick:ping",
+    values: [ping.id],
+    member: owner,
+    user: owner.user,
+    guild,
+    replied: false,
+    deferred: false,
+    async update(payload) {
+      this.updated = payload;
+    }
+  };
+  assert.equal(await modsetup.handleInteraction(picked), true);
+  assert.equal(store.getAntinukePing(guild.id), ping.id);
+  assert.equal(embedTitle(picked.updated.embeds[0]), "Mod Setup Complete");
+
+  const reset = await run(guild, owner, "-modlogreset");
+  assert.equal(titleOf(reset), "Mod Logs Reset");
+  assert.equal(store.getLog(guild.id, "punishments"), null);
+  assert.equal(store.getAntinukePing(guild.id), null);
+  assert.equal(created.filter((channel) => channel.name === "numb bot").length, 1);
 });
 
 test("muteall is god-only and a grant whitelists one command", async () => {

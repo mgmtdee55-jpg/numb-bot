@@ -50,6 +50,11 @@ CREATE TABLE IF NOT EXISTS event_logs (
   PRIMARY KEY (guild_id, category)
 );
 
+CREATE TABLE IF NOT EXISTS log_settings (
+  guild_id TEXT PRIMARY KEY,
+  antinuke_ping_role_id TEXT
+);
+
 CREATE TABLE IF NOT EXISTS voice_guards (
   guild_id TEXT NOT NULL,
   user_id TEXT NOT NULL,
@@ -151,6 +156,11 @@ const statements = {
   clearLogs: connection.prepare("DELETE FROM event_logs WHERE guild_id=?"),
   getLog: connection.prepare("SELECT channel_id FROM event_logs WHERE guild_id=? AND category=?"),
   listLogs: connection.prepare("SELECT category, channel_id FROM event_logs WHERE guild_id=? ORDER BY category"),
+  getPing: connection.prepare("SELECT antinuke_ping_role_id FROM log_settings WHERE guild_id=?"),
+  setPing: connection.prepare(`
+    INSERT INTO log_settings(guild_id, antinuke_ping_role_id) VALUES(?,?)
+    ON CONFLICT(guild_id) DO UPDATE SET antinuke_ping_role_id=excluded.antinuke_ping_role_id
+  `),
   getGuard: connection.prepare("SELECT * FROM voice_guards WHERE guild_id=? AND user_id=?"),
   ensureGuard: connection.prepare("INSERT OR IGNORE INTO voice_guards(guild_id, user_id) VALUES(?,?)"),
   setGuardFlag: connection.prepare("UPDATE voice_guards SET godmode=?, shield=?, stfu=?, last_channel_id=? WHERE guild_id=? AND user_id=?"),
@@ -283,6 +293,12 @@ module.exports = {
   },
   listLogs(guildId) {
     return statements.listLogs.all(key(guildId));
+  },
+  getAntinukePing(guildId) {
+    return statements.getPing.get(key(guildId))?.antinuke_ping_role_id || null;
+  },
+  setAntinukePing(guildId, roleId) {
+    statements.setPing.run(key(guildId), roleId ? key(roleId) : null);
   },
   getGuard(guildId, userId) {
     return statements.getGuard.get(key(guildId), key(userId)) || null;

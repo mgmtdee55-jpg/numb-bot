@@ -11,6 +11,7 @@ const WHO = {
   lock: "Founder+", unlock: "Founder+", hide: "Founder+", unhide: "Founder+",
   lockall: "Founder+", unlockall: "Founder+", nuke: "Founder+ · 25s", lockdown: "Founder+", unlockdown: "Founder+",
   logging: "Gods+", "logging set": "Gods+", "logging remove": "Gods+", "logging test": "Gods+", logs: "Gods+",
+  modlogreset: "Gods+",
   "role limit set": "Gods+", "role limit remove": "Gods+", "role limit view": "Gods+",
   vc: "Everyone", "vc setup": "Owner", "vc lock": "Everyone", "vc unlock": "Everyone",
   "vc ghost": "Premium+", "vc unghost": "Premium+", "vc kick": "Everyone", "vc ban": "Everyone",
@@ -43,7 +44,7 @@ const WHO = {
   help: "Everyone", showallcommands: "Everyone", afk: "Everyone", "afk mentions": "Everyone", setprefix: "Founder+",
   "alias add": "Founder+", "alias remove": "Founder+", "alias removeall": "Founder+", "alias reset": "Founder+",
   "alias view": "Founder+", "alias list": "Founder+", restart: "Founder+",
-  embedcreate: "Everyone", instagram: "Everyone", roblox: "Everyone",
+  embedcreate: "Everyone", instagram: "Everyone", tiktok: "Everyone", roblox: "Everyone",
   "giveaways start": "Gods+", "giveaways reroll": "Gods+", "gw start": "Gods+", "gw reroll": "Gods+",
   "set gw host": "Gods+", modsetup: "Gods+",
   "vanity set": "Gods+", "vanity reward": "Gods+", vanitysetup: "Gods+", vanity: "Gods+"
@@ -104,7 +105,8 @@ function categories(prefix) {
       ["logging set", "set a log channel"],
       ["logging remove", "clear a log channel"],
       ["logging test", "send a test log"],
-      ["logs", "alias of logging"]
+      ["logs", "alias of logging"],
+      ["modlogreset", "clear saved log channels"]
     ])],
     ["Role Limits", block(prefix, [
       ["role limit set", "cap a role"],
@@ -220,6 +222,7 @@ function categories(prefix) {
     ])],
     ["Social", block(prefix, [
       ["instagram", "view a profile (ig, insta)"],
+      ["tiktok", "view a TikTok profile"],
       ["roblox", "view a Roblox profile"]
     ])],
     ["Vanity", block(prefix, [

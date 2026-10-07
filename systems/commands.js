@@ -517,6 +517,16 @@ async function handleGrant(message, args, prefix, removing) {
   );
 }
 
+async function resetModLogs(message) {
+  if (!access.canSetup(message.member)) {
+    return deny(message, "Gods and the server owner can reset logs.");
+  }
+  store.clearLogs(message.guild.id);
+  vouchStore.setLogChannel(message.guild.id, null);
+  store.setAntinukePing(message.guild.id, null);
+  return reply(message, "Mod Logs Reset", "Saved log channels were cleared. The Discord channels were left in place. Run `-modsetup` to set them up again.");
+}
+
 async function restart(message) {
   if (!access.canRestart(message.member)) {
     return deny(message, "Founders, Gods, and the server owner can restart the bot.");
@@ -550,6 +560,10 @@ async function handleCommand(message, args, prefix) {
   }
   if (name === "modsetup") {
     await modsetup.open(message);
+    return true;
+  }
+  if (name === "modlogreset") {
+    await resetModLogs(message);
     return true;
   }
   if (name === "voice") {

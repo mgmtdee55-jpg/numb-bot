@@ -84,7 +84,13 @@ async function record(guild, event) {
   try {
     const channel = guild.channels?.cache?.get(channelId) || await guild.channels?.fetch?.(channelId);
     if (!canSend(channel)) return;
-    await channel.send({ embeds: [buildEmbed(entry)] });
+    const pingRoleId = systemStore.getAntinukePing(guild.id);
+    const payload = {
+      embeds: [buildEmbed(entry)],
+      allowedMentions: pingRoleId ? { parse: [], roles: [pingRoleId] } : { parse: [] }
+    };
+    if (pingRoleId) payload.content = `<@&${pingRoleId}>`;
+    await channel.send(payload);
   } catch (error) {
     if (error?.code === 10003) store.setLogChannel(guild.id, null);
     logThrottledError(`vouch-log:${guild.id}`, `[vouch log] ${guild.id}`, error);
