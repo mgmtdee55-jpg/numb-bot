@@ -478,26 +478,31 @@ test("channel controls lock, hide, lock every text channel, and nuke", async () 
   assert.match(general.copy.sent[0].embeds[0].data.description, /#general/);
 });
 
-test("showallcommands lists every category in compact fields", async () => {
+test("showallcommands pages one category at a time", async () => {
   const guild = makeGuild();
   const member = makeMember(guild, MEMBER, { name: "member" });
   const shown = await run(guild, member, "-showallcommands");
-  const pages = shown.replies[0].embeds;
-  assert.ok(pages.length >= 1 && pages.length <= 4);
-  const fields = pages.flatMap((page) => page.data.fields);
-  const names = fields.map((field) => field.name.replace(/ \d+$/, ""));
-  assert.deepEqual([...new Set(names)], [
+  const first = shown.replies[0].embeds[0].data;
+  assert.match(first.title, /^Moderation/);
+  assert.ok(first.description.split("\n").length <= 12);
+  assert.match(first.description, /`-ban`/);
+  const buttons = shown.replies[0].components[0].components;
+  assert.equal(buttons[0].data.label, "Back");
+  assert.equal(buttons[0].data.disabled, true);
+  assert.equal(buttons[1].data.label, "Next");
+  const catalog = require("../vouch/catalog");
+  const pages = catalog.commandPages("-");
+  const names = [...new Set(pages.map((page) => page.name))];
+  assert.deepEqual(names, [
     "Moderation", "Info", "Channels", "Logging", "Role Limits", "Voice",
-    "VC Ranks", "Vouch", "Staff", "Godmode", "Force", "Bot"
+    "VC Ranks", "Vouch", "Staff", "Godmode", "Force", "Social", "Vanity", "Giveaways", "Bot"
   ]);
-  const text = fields.map((field) => field.value).join("\n");
-  for (const command of ["-ban", "-antinuke vouch limit view", "-role limit set", "-nuke", "-ceo add", "-showallcommands"]) {
+  const text = pages.map((page) => page.description).join("\n");
+  for (const command of ["-ban", "-pban", "-antinuke vouch limit view", "-role limit set", "-nuke", "-ceo add", "-showallcommands", "-instagram", "-giveaways start", "-embedcreate"]) {
     assert.ok(text.includes(`\`${command}\``), command);
   }
   assert.doesNotMatch(text, /vouch check|vouch wipeall|limitedroles|setvouchlogs/);
-  for (const field of fields) assert.ok(field.value.length <= 1024, field.name);
-  const total = pages.reduce((sum, page) => sum + JSON.stringify(page.data).length, 0);
-  assert.ok(total < 6000 * pages.length);
+  for (const page of pages) assert.ok(page.description.split("\n").length <= 12, page.title);
 });
 
 test("event logs can be set, tested, and removed", async () => {

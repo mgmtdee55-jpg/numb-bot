@@ -135,6 +135,9 @@ async function handleCommand(message, client, prefix = "-") {
     if (["lock", "unlock", "ghost", "unghost", "claim"].includes(sub)) {
       return controls.runTextAction(message, sub);
     }
+    if (sub === "config" || sub === "configuration") {
+      return require("./vc-config").show(message);
+    }
     if (sub === "limit") {
       return controls.runLimitTextAction(message, args[2]);
     }

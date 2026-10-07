@@ -38,13 +38,15 @@ const BUILTIN_COMMANDS = new Set([
   "unforcenickname", "forcerolestrip", "forcestrip", "unforcerolestrip", "unforcestrip",
   "rolestrip", "vc", "mvc", "send", "lock", "unlock", "ghost", "unghost", "claim",
   "kick", "permit", "ban", "banned", "hardban", "softban", "tempban", "unban",
-  "unbanall", "fb", "foreverban", "fub", "foreverunban", "role", "fp", "fakepermissions",
+  "unbanall", "fb", "foreverban", "fub", "foreverunban", "pban", "personalban", "role", "fp", "fakepermissions",
   "rank", "ranks", "god", "m", "management", "mgmt", "managegod", "logging", "logs",
   "restart", "antinuke", "avatar", "banner", "serverinfo", "userinfo", "lockdown", "unlockdown",
   "ceo", "founder", "boss", "grant", "grants", "revoke", "ungrant", "hide", "unhide", "lockall", "unlockall", "nuke",
   "forceownership", "voiceoverride", "dragall", "voicehistory", "godmode", "ungodmode",
   "muteall", "unmuteall", "shield", "unshield", "follow", "unfollow", "chain", "bring",
-  "inspect", "forceclaim", "stfu", "unstfu", "stsu", "unstsu", "modsetup", "voice", "rankinfo", "unrank", "afk"
+  "inspect", "forceclaim", "stfu", "unstfu", "stsu", "unstsu", "modsetup", "voice", "rankinfo", "unrank", "afk",
+  "embedcreate", "instagram", "ig", "insta", "roblox", "giveaways", "gw", "voicemaster", "set",
+  "vanity", "vanitysetup"
 ]);
 
 const RANK = { user: 0, giver: 1, admin: 2, os: 3, owner: 4 };

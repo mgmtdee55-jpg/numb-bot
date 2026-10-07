@@ -25,6 +25,8 @@ const { startTempbanScheduler, enforceHardban, enforceForeverban, restoreForever
 const vouch = require("./vouch");
 const systems = require("./systems");
 const afk = require("./afk");
+const extras = require("./extras");
+const personalBan = require("./personal-ban");
 const { card, loadEmojis, emojisLoaded } = require("./feedback");
 let cleanupRunning = false;
 let recoveryRunning = false;
@@ -37,7 +39,8 @@ const client = new Client({
     GatewayIntentBits.GuildVoiceStates,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
-    GatewayIntentBits.GuildModeration
+    GatewayIntentBits.GuildModeration,
+    GatewayIntentBits.GuildPresences
   ],
   partials: [Partials.Channel, Partials.Message]
 });
@@ -49,6 +52,8 @@ client.once("clientReady", async () => {
   try {
     await loadEmojis(client);
     startTempbanScheduler(client);
+    extras.resumeGiveaways(client);
+    extras.syncVanity(client).catch((error) => console.error("[vanity]", error));
     await vouch.reconcileAll(client);
     for (const guild of client.guilds.cache.values()) {
       try {
@@ -138,6 +143,8 @@ client.on("guildMemberAdd", (member) => {
     console.error(`[foreverban join] ${member.guild.id}:${member.id}`, error);
   }).then(() => enforceHardban(member)).catch((error) => {
     console.error(`[hardban join] ${member.guild.id}:${member.id}`, error);
+  }).then(() => personalBan.enforce(member)).catch((error) => {
+    console.error(`[personal ban join] ${member.guild.id}:${member.id}`, error);
   }).then(() => vouch.handleGuildMemberAdd(member)).catch((error) => {
     console.error(`[vouch join] ${member.guild.id}:${member.id}`, error);
   });
@@ -150,6 +157,8 @@ client.on("guildMemberRemove", (member) => {
 client.on("guildMemberUpdate", (oldMember, newMember) => {
   vouch.handleGuildMemberUpdate(oldMember, newMember).catch((error) => {
     logThrottledError(`vouch-role:${newMember?.guild?.id}`, "[vouch roles]", error);
+  }).then(() => extras.enforceHostRole(oldMember, newMember)).catch((error) => {
+    logThrottledError(`gw-host:${newMember?.guild?.id}`, "[giveaway host]", error);
   });
 });
 
@@ -159,9 +168,17 @@ client.on("roleDelete", (role) => {
   });
 });
 
+client.on("presenceUpdate", (oldPresence, newPresence) => {
+  extras.handleVanityPresence(oldPresence, newPresence).catch((error) => {
+    console.error(`[vanity] ${newPresence?.guild?.id || "unknown"}`, error);
+  });
+});
+
 client.on("guildBanRemove", (ban) => {
   restoreForeverban(ban).catch((error) => {
     console.error(`[foreverban restore] ${ban.guild.id}:${ban.user.id}`, error);
+  }).then(() => personalBan.restore(ban)).catch((error) => {
+    console.error(`[personal ban restore] ${ban.guild.id}:${ban.user.id}`, error);
   });
 });
 
@@ -169,6 +186,7 @@ client.on("interactionCreate", async (interaction) => {
   try {
     await emojisLoaded();
     if (await handleSetupInteraction(interaction)) return;
+    if (await extras.handleInteraction(interaction)) return;
     if (await systems.handleInteraction(interaction)) return;
     if (interaction.isStringSelectMenu?.() && await vouch.handleInteraction(interaction)) return;
     if (interaction.isButton()) {

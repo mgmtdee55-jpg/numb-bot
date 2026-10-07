@@ -73,6 +73,7 @@ function moderationText(prefix) {
     `\`${p}tempban @user <duration> [reason]\``,
     `\`${p}unban <user>\``,
     `\`${p}unbanall\``,
+    `\`${p}pban @user\` / \`${p}personalban\` — only the banner or owner can lift it`,
     `\`${p}hardban @user [reason]\``,
     `\`${p}fb @user [reason]\` / \`${p}foreverban\``,
     `\`${p}fub @user\` / \`${p}foreverunban\``,
@@ -91,6 +92,7 @@ function voiceText(prefix) {
     `\`${p}vc kick|ban|unban|permit @user\``,
     `\`${p}vc claim\``,
     `\`${p}vc transfer @user\` — give your VC to someone in it`,
+    `\`${p}vc config\` / \`${p}voicemaster configuration\` — view VoiceMaster settings`,
     `\`${p}vc limit <0-99>\``,
     `\`${p}mvc\` — voice stats`,
     `\`${p}send interface\` — restore a channel interface`
@@ -103,10 +105,20 @@ function botText(prefix) {
     `\`${p}help\` / \`${p}bothelp\` — category menu`,
     `\`${p}showallcommands\` — every command, grouped`,
     `\`${p}setprefix <prefix>\` — persists after restart`,
+    `\`${p}embedcreate\` — build an embed`,
     `\`${p}alias add <shortcut> <command>\``,
     `\`${p}alias remove <shortcut>\``,
+    `\`${p}alias removeall <command>\``,
+    `\`${p}alias view <shortcut>\``,
     `\`${p}alias list\``,
+    `\`${p}alias reset\``,
     `\`${p}afk [status]\` — set an away status`,
+    `\`${p}afk mentions\` — who mentioned you while you were away`,
+    `\`${p}instagram <username>\` / \`${p}ig\` / \`${p}insta\``,
+    `\`${p}roblox <username>\``,
+    `\`${p}giveaways start [#channel] <duration> <winners> <prize>\``,
+    `\`${p}giveaways reroll [message link] [winners]\``,
+    `\`${p}set gw host @role\``,
     `\`${p}restart\` — Founders, Gods, and the server owner`,
     `\`${p}modsetup\` — Gods set vouch, voice ranks, and logs`
   ].join("\n");
@@ -250,6 +262,20 @@ function staffText(prefix) {
   ].join("\n");
 }
 
+function vanityText(prefix) {
+  const p = prefix;
+  return [
+    "Gods and the server owner set a status word and the roles it gives.",
+    "",
+    `\`${p}vanity set tunes\``,
+    `\`${p}vanity reward @role, role2, @role 3\``,
+    `\`${p}vanitysetup\` — buttons for the name and reward roles`,
+    "",
+    "The status has to contain that word. Capitals are ignored.",
+    "`carTUNES`, `/tunes`, `tunes101`, and `@tUnEs` all match `tunes`."
+  ].join("\n");
+}
+
 function channelText(prefix) {
   const p = prefix;
   return [
@@ -285,6 +311,7 @@ const PAGES = {
       "Vouch — Vouches, giver access, roles, and limits",
       "Management — Management access and Godmode administration",
       "Staff Access — God, Founder, Boss, and administrator registry",
+      "Vanity — Status word and reward roles",
       "",
       "Use the menu below to open a category."
     ].join("\n")
@@ -302,7 +329,8 @@ const PAGES = {
   management: { title: "Management", body: managementText },
   staff: { title: "Staff Access", body: staffText },
   channels: { title: "Channel Controls", body: channelText },
-  bot: { title: "Bot", body: botText }
+  bot: { title: "Bot", body: botText },
+  vanity: { title: "Vanity", body: vanityText }
 };
 
 const CATEGORY_ACCESS = {
@@ -320,7 +348,8 @@ const CATEGORY_ACCESS = {
   management: "Gods and above",
   staff: "Assigned tiers. The server owner can use every command.",
   force: "Founders and above",
-  bot: "Help is everyone. Prefix, aliases, and restart are Founders and above."
+  bot: "Help is everyone. Prefix, aliases, and restart are Founders and above.",
+  vanity: "Gods and the server owner"
 };
 
 function renderHelp(category, prefix, member) {
@@ -351,6 +380,7 @@ function helpOptions(selected, withEmoji) {
     { label: "Management", value: "management", description: "Godmode administration" },
     { label: "Staff Access", value: "staff", description: "God, Founder, and Boss" },
     { label: "Force Management", value: "force", description: "Nicknames and role strips" },
+    { label: "Vanity", value: "vanity", description: "Status rewards" },
     { label: "Bot", value: "bot", description: "Prefix, aliases, restart" }
   ];
   return options.map((option) => {

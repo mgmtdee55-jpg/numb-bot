@@ -184,6 +184,11 @@ const statements = {
   `),
   removeAlias: connection.prepare("DELETE FROM command_aliases WHERE guild_id=? AND shortcut=?"),
   listAliases: connection.prepare("SELECT shortcut, command_text, created_by, created_at FROM command_aliases WHERE guild_id=? ORDER BY shortcut"),
+  removeAliasesForCommand: connection.prepare(`
+    DELETE FROM command_aliases
+    WHERE guild_id=? AND (command_text=? OR command_text LIKE ? ESCAPE '\\')
+  `),
+  clearAliases: connection.prepare("DELETE FROM command_aliases WHERE guild_id=?"),
   getConfig: connection.prepare("SELECT * FROM vouch_config WHERE guild_id=?"),
   ensureConfig: connection.prepare("INSERT OR IGNORE INTO vouch_config(guild_id) VALUES(?)"),
   getOs: connection.prepare("SELECT 1 FROM vouch_os WHERE guild_id=? AND target_id=? AND target_type=?"),
@@ -409,6 +414,14 @@ module.exports = {
   },
   listAliases(guildId) {
     return statements.listAliases.all(key(guildId));
+  },
+  removeAliasesForCommand(guildId, commandText) {
+    const command = String(commandText || "").trim().toLowerCase();
+    const escaped = command.replace(/[\\%_]/g, (char) => `\\${char}`);
+    return statements.removeAliasesForCommand.run(key(guildId), command, `${escaped} %`).changes;
+  },
+  clearAliases(guildId) {
+    return statements.clearAliases.run(key(guildId)).changes;
   },
   getConfig(guildId) {
     return statements.getConfig.get(key(guildId)) || blankConfig(guildId);

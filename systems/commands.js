@@ -3,7 +3,6 @@ const roles = require("../vouch/roles");
 const { MAX_ALLOWANCE, MAX_ROLE_LIMIT } = require("../vouch/constants");
 const { card } = require("../feedback");
 const { reply } = require("../vouch/ui");
-const catalog = require("../vouch/catalog");
 const vouchLogging = require("../vouch/logging");
 const store = require("./store");
 const access = require("./access");
@@ -12,6 +11,7 @@ const voice = require("./voice");
 const channels = require("./channels");
 const modsetup = require("./modsetup");
 const afk = require("../afk");
+const extras = require("../extras");
 
 const RANK_COMMANDS = new Set(access.VOICE_COMMANDS);
 
@@ -531,14 +531,13 @@ async function restart(message) {
 
 async function handleCommand(message, args, prefix) {
   const name = commandName(args, prefix);
+  if (await extras.handleCommand(message, args, prefix)) return true;
   if (name === "afk") {
+    if ((args[1] || "").toLowerCase() === "mentions") {
+      await afk.listMentions(message);
+      return true;
+    }
     await afk.setAway(message, args.slice(1).join(" "));
-    return true;
-  }
-  if (name === "showallcommands") {
-    const pages = catalog.embeds(prefix);
-    if (pages[0]?.setFooter) pages[0].setFooter({ text: access.rankLine(message.member) });
-    await message.reply({ embeds: pages });
     return true;
   }
   if (name === "logging" || name === "logs") {

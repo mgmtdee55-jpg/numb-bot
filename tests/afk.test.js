@@ -93,4 +93,13 @@ test("afk announces a status, answers mentions, and welcomes the member back", a
   again.guild = guild;
   await afk.observe(again, "-");
   assert.equal(again.replies.length, 0);
+
+  const listed = message("-afk mentions", member.id);
+  listed.guild = guild;
+  listed.author = member.user;
+  listed.member = member;
+  await handleCommand(listed, guild.client, "-");
+  const mentionEmbed = listed.replies[0].embeds[0].data;
+  assert.match(mentionEmbed.description, /<@111000000000000013>/);
+  assert.match(mentionEmbed.description, /hello/);
 });

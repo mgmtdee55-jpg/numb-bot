@@ -142,6 +142,15 @@ CREATE TABLE IF NOT EXISTS foreverbans (
   account_created_at INTEGER,
   PRIMARY KEY (guild_id, user_id)
 );
+
+CREATE TABLE IF NOT EXISTS personal_bans (
+  guild_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  banner_id TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  username TEXT,
+  PRIMARY KEY (guild_id, user_id)
+);
 `);
 
 const saveConfigStatement = db.prepare(`
@@ -347,6 +356,25 @@ module.exports = {
   },
   listForeverbans(guildId) {
     return db.prepare("SELECT * FROM foreverbans WHERE guild_id=? ORDER BY created_at DESC").all(guildId);
+  },
+  addPersonalBan(row) {
+    db.prepare(`
+      INSERT INTO personal_bans(guild_id, user_id, banner_id, created_at, username)
+      VALUES(@guild_id, @user_id, @banner_id, @created_at, @username)
+      ON CONFLICT(guild_id, user_id) DO UPDATE SET
+        banner_id = excluded.banner_id,
+        created_at = excluded.created_at,
+        username = excluded.username
+    `).run(row);
+  },
+  removePersonalBan(guildId, userId) {
+    return db.prepare("DELETE FROM personal_bans WHERE guild_id=? AND user_id=?").run(guildId, userId).changes > 0;
+  },
+  getPersonalBan(guildId, userId) {
+    return db.prepare("SELECT * FROM personal_bans WHERE guild_id=? AND user_id=?").get(guildId, userId) || null;
+  },
+  listPersonalBans(guildId) {
+    return db.prepare("SELECT * FROM personal_bans WHERE guild_id=? ORDER BY created_at DESC").all(guildId);
   },
   saveFakePermissionTemplate(userId, name, payload) {
     db.prepare(`

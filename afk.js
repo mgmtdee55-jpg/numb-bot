@@ -20,6 +20,30 @@ const writeStatus = connection.prepare(`
 `);
 const clearStatus = connection.prepare("DELETE FROM afk_status WHERE guild_id=? AND user_id=?");
 
+connection.exec(`
+CREATE TABLE IF NOT EXISTS afk_mentions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  guild_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  author_id TEXT NOT NULL,
+  channel_id TEXT,
+  content TEXT,
+  created_at INTEGER NOT NULL
+);
+`);
+const addMention = connection.prepare(`
+  INSERT INTO afk_mentions(guild_id, user_id, author_id, channel_id, content, created_at)
+  VALUES(?,?,?,?,?,?)
+`);
+const listMentionsFor = connection.prepare(`
+  SELECT * FROM afk_mentions WHERE guild_id=? AND user_id=? ORDER BY id DESC LIMIT 15
+`);
+const trimMentions = connection.prepare(`
+  DELETE FROM afk_mentions WHERE guild_id=? AND user_id=? AND id NOT IN (
+    SELECT id FROM afk_mentions WHERE guild_id=? AND user_id=? ORDER BY id DESC LIMIT 15
+  )
+`);
+
 function cleanStatus(text) {
   const cleaned = String(text || "").replace(/\s+/g, " ").trim();
   return (cleaned || "AFK").slice(0, 180);
@@ -90,6 +114,19 @@ async function welcomeBack(message, since) {
   return sent;
 }
 
+async function listMentions(message) {
+  const rows = listMentionsFor.all(message.guild.id, message.author.id);
+  if (!rows.length) {
+    return replyCard(message, "Nobody mentioned you while you were Away.", { allowedMentions: { parse: [] } });
+  }
+  const lines = rows.map((row) => {
+    const where = row.channel_id ? `<#${row.channel_id}>` : "a channel";
+    const said = row.content ? ` — ${row.content}` : "";
+    return `<@${row.author_id}> in ${where}${said}`;
+  });
+  return replyCard(message, lines.join("\n"), { allowedMentions: { parse: [] } });
+}
+
 async function observe(message, prefix) {
   if (!message.guild || message.author?.bot) return;
   const guildId = message.guild.id;
@@ -108,6 +145,9 @@ async function observe(message, prefix) {
     if (!away) continue;
     const duration = formatDuration(Date.now() - Number(away.since));
     lines.push(`<@${id}> is Away with the status: **${away.status}**\nAway for: **${duration}**`);
+    const snippet = String(message.content || "").replace(/\s+/g, " ").trim().slice(0, 180);
+    addMention.run(guildId, id, authorId, message.channel?.id || null, snippet, Date.now());
+    trimMentions.run(guildId, id, guildId, id);
   }
   if (!lines.length) return;
   await replyCard(message, lines.join("\n\n"), {
@@ -118,6 +158,7 @@ async function observe(message, prefix) {
 module.exports = {
   WELCOME_DELETE_MS,
   setAway,
+  listMentions,
   observe,
   isAfkCommand,
   formatDuration

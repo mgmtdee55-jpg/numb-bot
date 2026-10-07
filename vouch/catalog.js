@@ -1,10 +1,11 @@
-const { EmbedBuilder } = require("discord.js");
+const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require("discord.js");
 const { ACCENT } = require("./constants");
+const access = require("../systems/access");
 
 const WHO = {
   ban: "Gods+", "ban check": "Gods+", "ban list": "Gods+", "ban purge": "Gods+", "ban recent": "Gods+",
   banned: "Gods+", softban: "Gods+", tempban: "Gods+", unban: "Gods+", unbanall: "Gods+",
-  hardban: "Gods+", foreverban: "Gods+", foreverunban: "Gods+", "role add": "Gods+",
+  hardban: "Gods+", foreverban: "Gods+", foreverunban: "Gods+", pban: "Gods+", "personal ban": "Gods+", "role add": "Gods+",
   "fp add": "Gods+", "fp remove": "Gods+", "fp list": "Gods+", "fp reset": "Gods+", "fp template": "Gods+",
   avatar: "Everyone", banner: "Everyone", serverinfo: "Everyone", userinfo: "Everyone",
   lock: "Founder+", unlock: "Founder+", hide: "Founder+", unhide: "Founder+",
@@ -13,7 +14,8 @@ const WHO = {
   "role limit set": "Gods+", "role limit remove": "Gods+", "role limit view": "Gods+",
   vc: "Everyone", "vc setup": "Owner", "vc lock": "Everyone", "vc unlock": "Everyone",
   "vc ghost": "Premium+", "vc unghost": "Premium+", "vc kick": "Everyone", "vc ban": "Everyone",
-  "vc permit": "Everyone", "vc claim": "Everyone · 30s", "vc transfer": "Everyone", "vc limit": "Everyone", mvc: "Everyone",
+  "vc permit": "Everyone", "vc claim": "Everyone · 30s", "vc transfer": "Everyone", "vc limit": "Everyone",
+  "vc config": "Gods+", "voicemaster configuration": "Gods+", mvc: "Everyone",
   "send interface": "Everyone", ghost: "Premium+", unghost: "Premium+", claim: "Everyone · 30s",
   "vc rank": "Everyone", "vc rank assign": "Gods+", "vc unrank": "Gods+", "vc rankinfo": "Everyone",
   "voice plus": "Gods+", "voice premium": "Gods+", "vouch premium plus": "Gods+",
@@ -38,9 +40,13 @@ const WHO = {
   grant: "Gods+", revoke: "Gods+", "grant list": "Gods+",
   forcemanage: "Founder+", forcenickname: "Founder+", unforcenickname: "Founder+",
   forcerolestrip: "Founder+", unforcerolestrip: "Founder+", rolestrip: "Founder+",
-  help: "Everyone", showallcommands: "Everyone", afk: "Everyone", setprefix: "Founder+",
-  "alias add": "Founder+", "alias remove": "Founder+", "alias list": "Founder+", restart: "Founder+",
-  modsetup: "Gods+"
+  help: "Everyone", showallcommands: "Everyone", afk: "Everyone", "afk mentions": "Everyone", setprefix: "Founder+",
+  "alias add": "Founder+", "alias remove": "Founder+", "alias removeall": "Founder+", "alias reset": "Founder+",
+  "alias view": "Founder+", "alias list": "Founder+", restart: "Founder+",
+  embedcreate: "Everyone", instagram: "Everyone", roblox: "Everyone",
+  "giveaways start": "Gods+", "giveaways reroll": "Gods+", "gw start": "Gods+", "gw reroll": "Gods+",
+  "set gw host": "Gods+", modsetup: "Gods+",
+  "vanity set": "Gods+", "vanity reward": "Gods+", vanitysetup: "Gods+", vanity: "Gods+"
 };
 
 function line(prefix, command, blurb) {
@@ -68,6 +74,7 @@ function categories(prefix) {
       ["hardban", "ban that blocks unban"],
       ["foreverban", "owner-tier ban"],
       ["foreverunban", "lift a foreverban"],
+      ["pban", "personal ban that only the banner or owner can lift"],
       ["role add", "give a role"],
       ["fp add", "grant a fake permission"],
       ["fp remove", "take a fake permission"],
@@ -116,6 +123,8 @@ function categories(prefix) {
       ["vc permit", "allow into your VC"],
       ["vc claim", "claim an empty VC"],
       ["vc transfer", "give your VC to someone in it"],
+      ["vc config", "view VoiceMaster settings"],
+      ["voicemaster configuration", "view VoiceMaster settings"],
       ["vc limit", "set the VC user limit"],
       ["mvc", "voice stats"],
       ["send interface", "restore a VC panel"],
@@ -209,15 +218,36 @@ function categories(prefix) {
       ["unforcerolestrip", "clear a role block"],
       ["rolestrip", "strip a role from everyone"]
     ])],
+    ["Social", block(prefix, [
+      ["instagram", "view a profile (ig, insta)"],
+      ["roblox", "view a Roblox profile"]
+    ])],
+    ["Vanity", block(prefix, [
+      ["vanity set", "set the status word"],
+      ["vanity reward", "set the reward roles"],
+      ["vanitysetup", "open the vanity panel"]
+    ])],
+    ["Giveaways", block(prefix, [
+      ["giveaways start", "start a giveaway"],
+      ["giveaways reroll", "pick a new winner"],
+      ["gw start", "alias of giveaways start"],
+      ["gw reroll", "alias of giveaways reroll"],
+      ["set gw host", "set the host role"]
+    ])],
     ["Bot", block(prefix, [
       ["help", "open the category menu"],
       ["showallcommands", "this list"],
+      ["embedcreate", "build an embed"],
       ["setprefix", "change the prefix"],
       ["alias add", "add a shortcut"],
       ["alias remove", "remove a shortcut"],
+      ["alias removeall", "remove aliases for one command"],
+      ["alias view", "show what an alias runs"],
       ["alias list", "list shortcuts"],
+      ["alias reset", "clear every alias"],
       ["restart", "restart the bot"],
-      ["afk", "set an away status"]
+      ["afk", "set an away status"],
+      ["afk mentions", "see who mentioned you"]
     ])]
   ].map(([name, value]) => ({ name, value }));
 }
@@ -243,27 +273,39 @@ function splitField(field) {
   }));
 }
 
-function embeds(prefix = "-") {
+function commandPages(prefix = "-") {
   const pages = [];
-  let fields = [];
-  let size = 8;
-  const flush = () => {
-    if (!fields.length) return;
-    pages.push(new EmbedBuilder().setColor(ACCENT).setTitle("Commands").addFields(fields));
-    fields = [];
-    size = 8;
-  };
-  for (const field of categories(prefix).flatMap(splitField)) {
-    const addition = field.name.length + field.value.length;
-    if (fields.length === 8 || size + addition > 5600) flush();
-    fields.push(field);
-    size += addition;
-  }
-  flush();
-  if (pages.length > 1) {
-    pages.forEach((page, index) => page.setTitle(`Commands ${index + 1}/${pages.length}`));
+  for (const category of categories(prefix)) {
+    const lines = String(category.value || "").split("\n").filter(Boolean);
+    const chunks = [];
+    for (let index = 0; index < lines.length; index += 12) chunks.push(lines.slice(index, index + 12));
+    if (!chunks.length) chunks.push(["No commands."]);
+    chunks.forEach((chunk, index) => {
+      pages.push({
+        name: category.name,
+        title: chunks.length > 1 ? `${category.name} · ${index + 1}/${chunks.length}` : category.name,
+        description: chunk.join("\n")
+      });
+    });
   }
   return pages;
 }
 
-module.exports = { categories, embeds };
+function pageMessage(prefix = "-", index = 0, member = null) {
+  const pages = commandPages(prefix);
+  const safe = Math.min(Math.max(pages.length - 1, 0), Math.max(0, Number(index) || 0));
+  const page = pages[safe];
+  const rank = member ? access.rankLine(member) : "";
+  const embed = new EmbedBuilder()
+    .setColor(ACCENT)
+    .setTitle(page.title)
+    .setDescription(page.description.slice(0, 4096))
+    .setFooter({ text: [`Page ${safe + 1} / ${pages.length}`, rank].filter(Boolean).join(" · ") });
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`spanter:commands:${safe - 1}`).setLabel("Back").setStyle(ButtonStyle.Secondary).setDisabled(safe <= 0),
+    new ButtonBuilder().setCustomId(`spanter:commands:${safe + 1}`).setLabel("Next").setStyle(ButtonStyle.Secondary).setDisabled(safe >= pages.length - 1)
+  );
+  return { embeds: [embed], components: [row] };
+}
+
+module.exports = { categories, commandPages, pageMessage, splitField };

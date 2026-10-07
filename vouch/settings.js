@@ -49,6 +49,34 @@ async function aliasCommand(message, args, prefix) {
     });
     return reply(message, "Alias Removed", `\`${prefix}${shortcut}\` no longer runs another command.`);
   }
+  if (action === "removeall") {
+    const commandText = normalizeCommand(args.slice(2).join(" "), prefix);
+    if (!commandText) return reply(message, "Usage", `\`${prefix}alias removeall <command>\``);
+    const removed = store.removeAliasesForCommand(message.guild.id, commandText);
+    if (!removed) return reply(message, "Missing Alias", "No aliases point at that command.");
+    await logging.record(message.guild, {
+      action: "alias_remove",
+      actorId: message.author.id,
+      reason: `removed ${removed} alias(es) for ${commandText}`
+    });
+    return reply(message, "Aliases Removed", `Removed **${removed}** alias(es) for \`${prefix}${commandText}\`.`);
+  }
+  if (action === "reset") {
+    const removed = store.clearAliases(message.guild.id);
+    await logging.record(message.guild, {
+      action: "alias_remove",
+      actorId: message.author.id,
+      reason: `reset ${removed} alias(es)`
+    });
+    return reply(message, "Aliases Reset", removed ? `Cleared **${removed}** alias(es).` : "There were no aliases to clear.");
+  }
+  if (action === "view") {
+    const shortcut = (args[2] || "").toLowerCase();
+    if (!shortcut) return reply(message, "Usage", `\`${prefix}alias view <shortcut>\``);
+    const commandText = store.getAlias(message.guild.id, shortcut);
+    if (!commandText) return reply(message, "Missing Alias", "That shortcut is not saved.");
+    return reply(message, "Alias", `\`${prefix}${shortcut}\` runs \`${prefix}${commandText}\`.`);
+  }
   if (action === "add") {
     const shortcut = (args[2] || "").toLowerCase();
     const commandText = normalizeCommand(args.slice(3).join(" "), prefix);
@@ -69,7 +97,14 @@ async function aliasCommand(message, args, prefix) {
     });
     return reply(message, "Alias Added", `\`${prefix}${shortcut}\` now runs \`${prefix}${commandText}\`.`);
   }
-  return reply(message, "Aliases", `\`${prefix}alias add <shortcut> <command>\`\n\`${prefix}alias remove <shortcut>\`\n\`${prefix}alias list\``);
+  return reply(message, "Aliases", [
+    `\`${prefix}alias add <shortcut> <command>\``,
+    `\`${prefix}alias remove <shortcut>\``,
+    `\`${prefix}alias removeall <command>\``,
+    `\`${prefix}alias view <shortcut>\``,
+    `\`${prefix}alias list\``,
+    `\`${prefix}alias reset\``
+  ].join("\n"));
 }
 
 function expandArgs(message, prefix) {

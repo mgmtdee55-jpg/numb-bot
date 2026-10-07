@@ -591,6 +591,8 @@ async function handleSoftban(message, args, prefix) {
   if (target && !canModerate(message.member, target)) {
     return reply(message, "Unable to Softban", "You cannot softban that member.");
   }
+  const personalRefusal = require("./personal-ban").refusal(message, userId);
+  if (personalRefusal) return personalRefusal;
   if (!botCanBan(message.guild)) {
     return reply(message, "Bot Missing Permission", "I need the Discord **Ban Members** permission to do that.");
   }
@@ -646,6 +648,10 @@ async function handleUnban(message, args, prefix) {
   if (db.isForeverbanned(message.guild.id, userId)) {
     return reply(message, "Foreverbanned", "That user has a **foreverban**. `-unban` cannot lift it. Only `-fub` / `-foreverunban` can.");
   }
+  const personalBan = require("./personal-ban");
+  const personalRefusal = personalBan.refusal(message, userId);
+  if (personalRefusal) return personalRefusal;
+  personalBan.liftIfAllowed(message, userId);
   if (db.isHardbanned(message.guild.id, userId)) {
     return reply(message, "Hardbanned", "That user is hardbanned. An administrator must use `-hardban reset` or remove the hardban first.");
   }
@@ -685,7 +691,7 @@ async function handleUnbanAll(message, args) {
   const bans = [...(await message.guild.bans.fetch().catch(() => new Map())).values()];
   const task = { cancelled: false };
   unbanAllTasks.set(message.guild.id, task);
-  await reply(message, "Mass Unban Started", `Unbanning **${bans.length}** user(s). Hardbans and **foreverbans** are skipped.`);
+  await reply(message, "Mass Unban Started", `Unbanning **${bans.length}** user(s). Hardbans, **foreverbans**, and personal bans you cannot lift are skipped.`);
   let unbanned = 0;
   let skipped = 0;
   try {
@@ -696,6 +702,12 @@ async function handleUnbanAll(message, args) {
         skipped += 1;
         continue;
       }
+      const personal = require("./personal-ban");
+      if (db.getPersonalBan(message.guild.id, userId) && !personal.canLift(message.member, db.getPersonalBan(message.guild.id, userId))) {
+        skipped += 1;
+        continue;
+      }
+      personal.liftIfAllowed(message, userId);
       const ok = await message.guild.members.unban(userId, "Mass unban").then(() => true).catch(() => false);
       if (ok) {
         unbanned += 1;
@@ -797,6 +809,10 @@ async function handleForeverunban(message, args, prefix) {
   if (!db.isForeverbanned(message.guild.id, userId)) {
     return reply(message, "Not Foreverbanned", "That user does not have a foreverban.");
   }
+  const personalBan = require("./personal-ban");
+  const personalRefusal = personalBan.refusal(message, userId);
+  if (personalRefusal) return personalRefusal;
+  personalBan.liftIfAllowed(message, userId);
   if (!botCanBan(message.guild)) {
     return reply(message, "Bot Missing Permission", "I need the Discord **Ban Members** permission to do that.");
   }
