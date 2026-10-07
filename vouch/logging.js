@@ -40,7 +40,9 @@ const LABELS = {
   force_role_strip: "Forced role strip",
   force_role_strip_clear: "Forced role strip cleared",
   role_strip: "Role stripped",
-  role_limit: "Role limit changed"
+  role_limit: "Role limit changed",
+  command_grant: "Command granted",
+  command_revoke: "Command revoked"
 };
 
 function canSend(channel) {

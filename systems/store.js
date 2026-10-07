@@ -98,6 +98,15 @@ CREATE TABLE IF NOT EXISTS text_lock_snapshots (
   send_messages TEXT NOT NULL,
   PRIMARY KEY (guild_id, channel_id)
 );
+
+CREATE TABLE IF NOT EXISTS command_grants (
+  guild_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  command TEXT NOT NULL,
+  granted_by TEXT,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (guild_id, user_id, command)
+);
 `);
 
 function key(value) {
@@ -173,7 +182,15 @@ const statements = {
   getTextLock: connection.prepare("SELECT send_messages FROM text_lock_snapshots WHERE guild_id=? AND channel_id=?"),
   listTextLocks: connection.prepare("SELECT channel_id, send_messages FROM text_lock_snapshots WHERE guild_id=?"),
   clearTextLock: connection.prepare("DELETE FROM text_lock_snapshots WHERE guild_id=? AND channel_id=?"),
-  clearTextLocks: connection.prepare("DELETE FROM text_lock_snapshots WHERE guild_id=?")
+  clearTextLocks: connection.prepare("DELETE FROM text_lock_snapshots WHERE guild_id=?"),
+  grantCommand: connection.prepare(`
+    INSERT INTO command_grants(guild_id, user_id, command, granted_by, created_at) VALUES(?,?,?,?,?)
+    ON CONFLICT(guild_id, user_id, command) DO UPDATE SET granted_by=excluded.granted_by, created_at=excluded.created_at
+  `),
+  revokeCommand: connection.prepare("DELETE FROM command_grants WHERE guild_id=? AND user_id=? AND command=?"),
+  hasCommandGrant: connection.prepare("SELECT 1 FROM command_grants WHERE guild_id=? AND user_id=? AND command=?"),
+  listCommandGrants: connection.prepare("SELECT * FROM command_grants WHERE guild_id=? ORDER BY user_id, command"),
+  listCommandGrantsForUser: connection.prepare("SELECT * FROM command_grants WHERE guild_id=? AND user_id=? ORDER BY command")
 };
 
 function saveGuard(guildId, userId, patch) {
@@ -346,5 +363,20 @@ module.exports = {
   },
   clearTextLocks(guildId) {
     statements.clearTextLocks.run(key(guildId));
+  },
+  grantCommand(guildId, userId, command, grantedBy) {
+    statements.grantCommand.run(key(guildId), key(userId), command, key(grantedBy), Date.now());
+  },
+  revokeCommand(guildId, userId, command) {
+    return statements.revokeCommand.run(key(guildId), key(userId), command).changes > 0;
+  },
+  hasCommandGrant(guildId, userId, command) {
+    return !!statements.hasCommandGrant.get(key(guildId), key(userId), command);
+  },
+  listCommandGrants(guildId) {
+    return statements.listCommandGrants.all(key(guildId));
+  },
+  listCommandGrantsForUser(guildId, userId) {
+    return statements.listCommandGrantsForUser.all(key(guildId), key(userId));
   }
 };

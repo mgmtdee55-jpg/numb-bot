@@ -13,7 +13,11 @@ function guardKey(guildId, userId) {
 }
 
 function denyRank(message, command) {
-  return reply(message, "Rank Required", `**${command}** requires **${access.requirementFor(command)}**. Gods and Founders can use every voice command.`);
+  const requirement = access.requirementFor(command);
+  const note = access.isGodCommand(command)
+    ? "Only Gods and the server owner can use it, unless one of them grants it."
+    : "Gods and Founders can use the other voice commands.";
+  return reply(message, "Rank Required", `**${command}** requires **${requirement}**. ${note}`);
 }
 
 function sleep(ms) {
@@ -377,7 +381,7 @@ function describeVoice(before, after) {
 }
 
 async function lockdown(message, enabled) {
-  if (!access.canUseChannels(message.member)) {
+  if (!access.canUseChannels(message.member, enabled ? "lockdown" : "unlockdown")) {
     return reply(message, "Access Denied", "Founders, Gods, and the server owner can lock the server.");
   }
   const wait = cooldowns.consume(message.guild.id, message.author.id, enabled ? "lockdown" : "unlockdown");

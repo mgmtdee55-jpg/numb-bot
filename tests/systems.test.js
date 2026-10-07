@@ -288,15 +288,20 @@ test("dragall moves only the named channel and muteall stays in the current call
   assert.equal(bystander.voice.channelId, other.id);
   assert.equal(shielded.voice.channelId, source.id);
 
+  const god = makeMember(guild, "111000000000000025", { name: "god" });
+  store.setStaff(guild.id, god.id, "god", OWNER);
+  place(god, destination);
   const muted = [];
-  for (const member of [founder, pulledA, pulledB, bystander, shielded]) {
+  for (const member of [founder, god, pulledA, pulledB, bystander, shielded]) {
     member.voice.setMute = async (value) => {
       muted.push([member.id, value]);
     };
   }
-  const mute = await run(guild, founder, "-muteall");
+  const founderMute = await run(guild, founder, "-muteall");
+  assert.equal(titleOf(founderMute), "Rank Required");
+  const mute = await run(guild, god, "-muteall");
   assert.equal(titleOf(mute), "Channel Muted");
-  assert.deepEqual(muted.map((entry) => entry[0]).sort(), [pulledA.id, pulledB.id].sort());
+  assert.deepEqual(muted.map((entry) => entry[0]).sort(), [founder.id, pulledA.id, pulledB.id].sort());
 });
 
 test("role limits and vouch caps use the new command names", async () => {
@@ -627,4 +632,91 @@ test("mod setup saves the kick, ban, and timeout channel", async () => {
   assert.equal(await modsetup.handleInteraction(interaction), true);
   assert.equal(store.getLog(guild.id, "punishments"), "555000000000000088");
   assert.equal(embedTitle(interaction.updated.embeds[0]), "Mod Setup Complete");
+});
+
+test("muteall is god-only and a grant whitelists one command", async () => {
+  const guild = makeGuild();
+  const owner = makeMember(guild, OWNER, { name: "owner" });
+  const founder = makeMember(guild, "111000000000000030", { name: "founder" });
+  const member = makeMember(guild, MEMBER, { name: "member" });
+  const target = makeMember(guild, TARGET, { name: "target" });
+  store.setStaff(guild.id, founder.id, "founder", OWNER);
+  const premium = { id: "222000000000000088", name: "Premium Plus", position: 6, managed: false };
+  guild.roles.cache.set(premium.id, premium);
+  store.setVoiceRole(guild.id, "premiumplus", premium.id);
+  member.roles.cache.set(premium.id, premium);
+  store.setRank(guild.id, member.id, "premiumplus", owner.id);
+
+  const channel = { id: "444000000000000201", type: ChannelType.GuildVoice, guild, members: new Map() };
+  guild.channels.cache.set(channel.id, channel);
+  for (const person of [owner, member, target]) {
+    person.voice.channel = channel;
+    person.voice.channelId = channel.id;
+    channel.members.set(person.id, person);
+    person.voice.setMute = async (value) => {
+      person.voice.serverMute = value;
+    };
+  }
+
+  assert.equal(titleOf(await run(guild, member, "-muteall")), "Rank Required");
+  assert.equal(titleOf(await run(guild, founder, "-grant muteall " + member.id)), "Access Denied");
+  assert.equal(titleOf(await run(guild, owner, "-muteall")), "Channel Muted");
+  assert.equal(target.voice.serverMute, true);
+
+  const granted = await run(guild, owner, `-grant muteall ${member.id}`);
+  assert.equal(titleOf(granted), "Command Granted");
+  target.voice.serverMute = false;
+  assert.equal(titleOf(await run(guild, member, "-muteall")), "Channel Muted");
+  assert.equal(target.voice.serverMute, true);
+  assert.equal(titleOf(await run(guild, member, "-unmuteall")), "Rank Required");
+  assert.equal(titleOf(await run(guild, member, "-dragall")), "Rank Required");
+
+  const listed = await run(guild, owner, `-grant list ${member.id}`);
+  assert.match(textOf(listed), /muteall/);
+  assert.equal(titleOf(await run(guild, owner, `-revoke muteall ${member.id}`)), "Command Revoked");
+  assert.equal(titleOf(await run(guild, member, "-muteall")), "Rank Required");
+
+  target.setNickname = async () => {};
+  assert.equal(titleOf(await run(guild, owner, `-grant forcenickname ${member.id}`)), "Command Granted");
+  assert.equal(titleOf(await run(guild, member, `-forcenickname ${target.id} Dee`)), "Forced Nickname");
+  assert.equal(titleOf(await run(guild, member, `-rolestrip ${ROLE}`)), "Not Allowed");
+  assert.equal(store.hasCommandGrant(guild.id, member.id, "forcenickname"), true);
+  assert.equal(store.hasCommandGrant(guild.id, member.id, "rolestrip"), false);
+});
+
+test("updates keep saved vc rows, history, and command grants", async () => {
+  const guild = makeGuild();
+  const owner = makeMember(guild, OWNER);
+  const member = makeMember(guild, MEMBER);
+  const channelId = "444000000000000301";
+  db.addTemp({
+    channel_id: channelId,
+    guild_id: guild.id,
+    owner_id: owner.id,
+    interface_message_id: null,
+    created_at: Date.now()
+  });
+  store.addHistory(guild.id, member.id, "joined the saved vc");
+  assert.equal(titleOf(await run(guild, owner, `-grant unmuteall ${member.id}`)), "Command Granted");
+
+  db.connection.exec(`
+    CREATE TABLE IF NOT EXISTS command_grants (
+      guild_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      command TEXT NOT NULL,
+      granted_by TEXT,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (guild_id, user_id, command)
+    );
+  `);
+  db.connection.pragma("wal_checkpoint(FULL)");
+  const Database = require("better-sqlite3");
+  const saved = new Database(process.env.DB_PATH, { readonly: true });
+  const grant = saved.prepare("SELECT command FROM command_grants WHERE guild_id=? AND user_id=?").get(guild.id, member.id);
+  const temp = saved.prepare("SELECT owner_id FROM temp_channels WHERE channel_id=? AND deleted_at IS NULL").get(channelId);
+  const history = saved.prepare("SELECT summary FROM voice_history WHERE guild_id=? AND user_id=?").get(guild.id, member.id);
+  saved.close();
+  assert.equal(grant.command, "unmuteall");
+  assert.equal(temp.owner_id, owner.id);
+  assert.equal(history.summary, "joined the saved vc");
 });

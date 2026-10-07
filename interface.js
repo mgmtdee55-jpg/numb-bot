@@ -195,7 +195,7 @@ async function handleButton(interaction) {
   }
   if (action === "ghost" || action === "unghost") {
     const actor = interaction.member || interaction.guild?.members?.cache?.get(interaction.user?.id);
-    if (!access.canGhost(actor)) {
+    if (!access.canGhost(actor, action)) {
       return interaction.editReply(privateResult("Rank Required", "Hiding or showing a VC requires Voice Premium or higher."));
     }
   }
@@ -376,7 +376,7 @@ async function runTextAction(message, action) {
   if (!channel || !row || row.owner_id !== message.author.id) {
     return message.reply(result("Owner Only", "Only the current owner can control this temporary voice channel."));
   }
-  if ((action === "ghost" || action === "unghost") && !access.canGhost(message.member)) {
+  if ((action === "ghost" || action === "unghost") && !access.canGhost(message.member, action)) {
     return message.reply(result("Rank Required", "Hiding or showing a VC requires Voice Premium or higher."));
   }
   const cooldownReply = await actionCooldownReply(message, channel, action);

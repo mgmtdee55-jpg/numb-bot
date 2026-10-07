@@ -25,4 +25,4 @@ Members need **View Channel** and **Connect** to use the selected Join to Create
 
 ## Railway
 
-Connect this repo in Railway. The start command is `npm start`. Set `DISCORD_TOKEN` in the service variables. `DB_PATH` defaults to `./data/vc.sqlite`. Attach a volume mounted at `/app/data` if the database should survive redeploys.
+Connect this repo in Railway. The start command is `npm start`. Set `DISCORD_TOKEN` in the service variables. `DB_PATH` defaults to `./data/vc.sqlite`. Keep a volume mounted at `/app/data` so redeploys reuse the same database file. Schema updates only add tables and columns. They do not drop VC ownership, bans, voice history, staff, or command grants. The database is gitignored, so commits do not replace it.

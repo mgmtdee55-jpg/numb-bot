@@ -18,7 +18,7 @@ const WHO = {
   "vc rank": "Everyone", "vc rank assign": "Gods+", "vc unrank": "Gods+", "vc rankinfo": "Everyone",
   "voice plus": "Gods+", "voice premium": "Gods+", "vouch premium plus": "Gods+",
   forceownership: "Founder+", voiceoverride: "Premium+", dragall: "Founder+", voicehistory: "Founder+",
-  godmode: "Founder+", ungodmode: "Founder+", muteall: "Premium+", unmuteall: "Premium+",
+  godmode: "Founder+", ungodmode: "Founder+", muteall: "Gods+", unmuteall: "Gods+",
   shield: "Founder+", unshield: "Founder+", follow: "Premium", chain: "Premium", unfollow: "Premium",
   bring: "Premium", inspect: "Plus+", forceclaim: "Premium", stsu: "Premium+", unstsu: "Premium+",
   vouch: "Gods+", "vouch give": "Giver+", "vouch take": "Giver+", vouchstrip: "Gods+",
@@ -35,6 +35,7 @@ const WHO = {
   "antinuke admin add": "Owner", "antinuke admin remove": "Owner", "antinuke admin list": "Everyone",
   "god add": "Gods+", "god take": "Gods+", "god info": "Gods+",
   "m add": "Gods+", "m take": "Gods+", "m list": "Gods+",
+  grant: "Gods+", revoke: "Gods+", "grant list": "Gods+",
   forcemanage: "Founder+", forcenickname: "Founder+", unforcenickname: "Founder+",
   forcerolestrip: "Founder+", unforcerolestrip: "Founder+", rolestrip: "Founder+",
   help: "Everyone", showallcommands: "Everyone", afk: "Everyone", setprefix: "Founder+",
@@ -186,7 +187,10 @@ function categories(prefix) {
       ["antinuke admins", "staff registry"],
       ["antinuke admin add", "add an antinuke admin"],
       ["antinuke admin remove", "remove an antinuke admin"],
-      ["antinuke admin list", "list antinuke admins"]
+      ["antinuke admin list", "list antinuke admins"],
+      ["grant", "whitelist one command"],
+      ["revoke", "remove a command whitelist"],
+      ["grant list", "list command whitelists"]
     ])],
     ["Godmode", block(prefix, [
       ["god add", "give godmode"],

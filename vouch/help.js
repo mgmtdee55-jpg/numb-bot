@@ -136,9 +136,10 @@ function godmodeText() {
 function ranksText() {
   return [
     "Voice Plus, Voice Premium, and Voice Premium Plus are protected roles.",
-    "Gods and Founders can use every voice command without one of those roles.",
+    "Gods and Founders can use the other voice commands without one of those roles.",
     "",
-    "**Voice Premium Plus** — voiceoverride, muteall, unmuteall, stsu, unstsu, plus Premium",
+    "**Gods and the server owner** — muteall, unmuteall",
+    "**Voice Premium Plus** — voiceoverride, stsu, unstsu, plus Premium",
     "**Voice Premium** — follow, chain, unfollow, bring, forceclaim, inspect",
     "**Voice Plus** — inspect",
     "**Gods and Founders** — forceownership, dragall, voicehistory, godmode, shield",
@@ -237,7 +238,14 @@ function staffText(prefix) {
     "**Registry**",
     `\`${p}antinuke admins\` — view the current staff registry`,
     "",
-    "The server owner or a God can add and remove Founder and Boss."
+    "The server owner or a God can add and remove Founder and Boss.",
+    "",
+    "**Command grants**",
+    "Gods and the server owner can whitelist one command without giving the rest of a rank.",
+    `\`${p}grant muteall @user\``,
+    `\`${p}grant forcenickname @user\``,
+    `\`${p}revoke <command> @user\``,
+    `\`${p}grant list [@user]\``
   ].join("\n");
 }
 

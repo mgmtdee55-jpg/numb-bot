@@ -18,7 +18,7 @@ const LADDER = [
     label: "Voice Premium Plus",
     aliases: ["premiumplus", "voicepremiumplus", "premium+"],
     commands: [
-      "voiceoverride", "muteall", "unmuteall", "stsu", "unstsu",
+      "voiceoverride", "stsu", "unstsu",
       "follow", "unfollow", "chain", "bring", "inspect", "forceclaim"
     ]
   }
@@ -28,8 +28,22 @@ const FOUNDER_COMMANDS = new Set([
   "forceownership", "dragall", "voicehistory", "godmode", "ungodmode", "shield", "unshield"
 ]);
 
+const GOD_COMMANDS = new Set(["muteall", "unmuteall"]);
+
+const FORCE_COMMANDS = [
+  "forcemanage", "forcenickname", "unforcenickname", "forcerolestrip", "forcestrip",
+  "unforcerolestrip", "rolestrip"
+];
+
+const CHANNEL_COMMANDS = [
+  "lock", "unlock", "hide", "unhide", "lockall", "unlockall", "nuke", "lockdown", "unlockdown"
+];
+
+const GHOST_COMMANDS = ["ghost", "unghost"];
+
 const VOICE_COMMANDS = [
   ...FOUNDER_COMMANDS,
+  ...GOD_COMMANDS,
   ...LADDER.flatMap((rank) => rank.commands),
   "stfu", "unstfu"
 ];
@@ -53,8 +67,8 @@ const REQUIREMENT = {
   shield: "Gods and Founders",
   unshield: "Gods and Founders",
   voiceoverride: "Voice Premium Plus",
-  muteall: "Voice Premium Plus",
-  unmuteall: "Voice Premium Plus",
+  muteall: "Gods and the server owner",
+  unmuteall: "Gods and the server owner",
   stsu: "Voice Premium Plus",
   unstsu: "Voice Premium Plus",
   stfu: "Voice Premium Plus",
@@ -144,7 +158,8 @@ function canConfigureLogs(member) {
   return canUseLogs(member);
 }
 
-function canUseChannels(member) {
+function canUseChannels(member, command) {
+  if (command && hasCommandGrant(member, command)) return true;
   return aboveStaff(member) || hasStaff(member, "founder");
 }
 
@@ -152,7 +167,8 @@ function canModerate(member) {
   return aboveStaff(member) || hasStaff(member, "god");
 }
 
-function canUseForce(member) {
+function canUseForce(member, command) {
+  if (command && hasCommandGrant(member, command)) return true;
   return aboveStaff(member) || hasStaff(member, "founder");
 }
 
@@ -209,16 +225,63 @@ function rankLine(member) {
   return "Your rank: Member";
 }
 
+function canonicalCommand(command) {
+  const name = String(command || "").trim().toLowerCase().replace(/^-/, "");
+  if (name === "stfu") return "stsu";
+  if (name === "unstfu") return "unstsu";
+  if (name === "unforcestrip") return "unforcerolestrip";
+  return name;
+}
+
+function grantNames(command) {
+  const name = canonicalCommand(command);
+  if (name === "forcerolestrip") return ["forcerolestrip", "forcestrip"];
+  if (name === "rolestrip") return ["rolestrip", "forcestrip"];
+  if (name === "forcestrip") return ["forcestrip", "forcerolestrip", "rolestrip"];
+  return [name];
+}
+
+const GRANTABLE = new Set([
+  ...FOUNDER_COMMANDS,
+  ...GOD_COMMANDS,
+  ...LADDER.flatMap((rank) => rank.commands),
+  ...FORCE_COMMANDS,
+  ...CHANNEL_COMMANDS,
+  ...GHOST_COMMANDS
+]);
+
+function isGrantable(command) {
+  return GRANTABLE.has(canonicalCommand(command));
+}
+
+function hasCommandGrant(member, command) {
+  if (!member?.guild || !command) return false;
+  return grantNames(command).some((name) => store.hasCommandGrant(member.guild.id, member.id, name));
+}
+
+function canGrantCommands(member) {
+  return isServerOwner(member) || isBotOwner(member?.id) || hasStaff(member, "god");
+}
+
+function isGodCommand(command) {
+  return GOD_COMMANDS.has(canonicalCommand(command));
+}
+
 function canUseRankCommand(member, command) {
   if (!member) return false;
-  const name = command === "stfu" ? "stsu" : command === "unstfu" ? "unstsu" : command;
+  const name = canonicalCommand(command);
+  if (hasCommandGrant(member, name)) return true;
+  if (GOD_COMMANDS.has(name)) {
+    return isServerOwner(member) || isBotOwner(member.id) || hasStaff(member, "god");
+  }
   if (isServerOwner(member) || isBotOwner(member.id) || hasStaff(member, "founder")) return true;
   if (FOUNDER_COMMANDS.has(name)) return false;
   return commandsForRank(voiceRankKey(member)).includes(name);
 }
 
-function canGhost(member) {
+function canGhost(member, action) {
   if (!member?.guild) return false;
+  if (action && hasCommandGrant(member, action)) return true;
   if (isServerOwner(member) || isBotOwner(member.id) || hasStaff(member, "founder")) return true;
   const roles = store.getVoiceRoles(member.guild.id);
   const configured = !!(roles?.premium_role_id || roles?.premium_plus_role_id);
@@ -232,14 +295,32 @@ function requirementFor(command) {
   return REQUIREMENT[name] || "a VC rank";
 }
 
+function grantHelp(prefix = "-") {
+  return [
+    `\`${prefix}grant <command> @user\` — whitelist one command`,
+    `\`${prefix}revoke <command> @user\` — remove that whitelist`,
+    `\`${prefix}grant list\` — show every grant`,
+    `\`${prefix}grant list @user\` — show one member`,
+    "",
+    "A grant is only that command. It does not give the rest of a rank or role.",
+    "",
+    "**Gods and the server owner** — muteall, unmuteall",
+    "**Voice** — forceownership, dragall, voicehistory, godmode, ungodmode, shield, unshield, voiceoverride, stsu, follow, chain, unfollow, bring, forceclaim, inspect",
+    "**Force** — forcemanage, forcenickname, unforcenickname, forcerolestrip, forcestrip, unforcerolestrip, rolestrip",
+    "**Channels** — lock, unlock, hide, unhide, lockall, unlockall, nuke, lockdown, unlockdown, ghost, unghost"
+  ].join("\n");
+}
+
 function ladderText() {
   return [
-    "**Gods and Founders** can use every voice command without a VC rank.",
-    "**Voice Premium Plus** — voiceoverride, muteall, unmuteall, stsu, unstsu, plus Voice Premium",
+    "**Gods and the server owner** — muteall, unmuteall. Founders do not get these.",
+    "**Gods and Founders** can use the other voice commands without a VC rank.",
+    "**Voice Premium Plus** — voiceoverride, stsu, unstsu, plus Voice Premium",
     "**Voice Premium** — follow, chain, unfollow, bring, forceclaim, inspect",
     "**Voice Plus** — inspect",
     "",
-    "Only Gods can add or remove these roles, and only with the bot."
+    "Only Gods can add or remove these roles, and only with the bot.",
+    "Gods and the server owner can whitelist one command with `-grant <command> @user`."
   ].join("\n");
 }
 
@@ -279,5 +360,11 @@ module.exports = {
   canUseRankCommand,
   canGhost,
   requirementFor,
-  ladderText
+  ladderText,
+  canonicalCommand,
+  isGrantable,
+  hasCommandGrant,
+  canGrantCommands,
+  isGodCommand,
+  grantHelp
 };

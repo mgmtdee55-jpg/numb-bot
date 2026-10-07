@@ -55,8 +55,8 @@ function restoredSend(state) {
   return null;
 }
 
-async function ensureAccess(message) {
-  if (!access.canUseChannels(message.member)) {
+async function ensureAccess(message, command) {
+  if (!access.canUseChannels(message.member, command)) {
     await deny(message);
     return false;
   }
@@ -73,7 +73,7 @@ async function editEveryone(channel, guild, data) {
 }
 
 async function setLock(message, args, locked) {
-  if (!(await ensureAccess(message))) return;
+  if (!(await ensureAccess(message, locked ? "lock" : "unlock"))) return;
   const channel = await resolveChannel(message, args[1]);
   if (!canEdit(channel)) return reply(message, "Missing Channel", "Mention a channel, or run this in the channel you want to change.");
   try {
@@ -86,7 +86,7 @@ async function setLock(message, args, locked) {
 }
 
 async function setHidden(message, args, hidden) {
-  if (!(await ensureAccess(message))) return;
+  if (!(await ensureAccess(message, hidden ? "hide" : "unhide"))) return;
   const channel = await resolveChannel(message, args[1]);
   if (!canEdit(channel)) return reply(message, "Missing Channel", "Mention a channel, or run this in the channel you want to change.");
   try {
@@ -99,7 +99,7 @@ async function setHidden(message, args, hidden) {
 }
 
 async function setAllText(message, locked) {
-  if (!(await ensureAccess(message))) return;
+  if (!(await ensureAccess(message, locked ? "lockall" : "unlockall"))) return;
   const wait = cooldowns.consume(message.guild.id, message.author.id, locked ? "lockall" : "unlockall");
   if (wait) return reply(message, "Please Wait", cooldowns.waitText(wait));
   let count = 0;
@@ -127,7 +127,7 @@ async function setAllText(message, locked) {
 }
 
 async function nuke(message, args) {
-  if (!(await ensureAccess(message))) return;
+  if (!(await ensureAccess(message, "nuke"))) return;
   const wait = cooldowns.consume(message.guild.id, message.author.id, "nuke");
   if (wait) return reply(message, "Please Wait", `Nuke can be used again in **${Math.max(1, Math.ceil(wait / 1000))}** seconds.`);
   const channel = await resolveChannel(message, args[1]);

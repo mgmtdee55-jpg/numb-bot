@@ -470,6 +470,53 @@ async function handleInfo(message, name, args) {
   ].join("\n"));
 }
 
+async function handleGrant(message, args, prefix, removing) {
+  if (!access.canGrantCommands(message.member)) {
+    return deny(message, "Only Gods and the server owner can grant or revoke a single command.");
+  }
+  const sub = String(args[1] || "").trim().toLowerCase();
+  if (!removing && (!sub || sub === "help")) {
+    return reply(message, "Command Grants", access.grantHelp(prefix));
+  }
+  if (!removing && (sub === "list" || sub === "ls")) {
+    const member = args[2] ? await resolveMember(message, args[2]) : null;
+    if (args[2] && !member) return reply(message, "Missing User", "Mention the member whose grants you want to see.");
+    const rows = member
+      ? store.listCommandGrantsForUser(message.guild.id, member.id)
+      : store.listCommandGrants(message.guild.id);
+    if (!rows.length) {
+      return reply(message, "Command Grants", member ? "That member has no command grants." : "Nobody has a command grant.");
+    }
+    const lines = rows.map((row) => `\`${row.command}\` — <@${row.user_id}>${row.granted_by ? `, granted by <@${row.granted_by}>` : ""}`);
+    return reply(message, "Command Grants", lines.join("\n"));
+  }
+  const command = access.canonicalCommand(sub);
+  if (!command || !access.isGrantable(command)) {
+    return reply(message, "Unknown Command", `That command cannot be granted on its own.\n\n${access.grantHelp(prefix)}`);
+  }
+  const member = await resolveMember(message, args[2]);
+  if (!member) {
+    return reply(message, "Missing User", `\`${prefix}${removing ? "revoke" : "grant"} ${command} @user\``);
+  }
+  if (member.user?.bot) return reply(message, "Invalid Target", "Bots cannot hold a command grant.");
+  if (member.id === message.guild.ownerId) {
+    return reply(message, "Server Owner", "The server owner already has every command.");
+  }
+  if (removing) {
+    const removed = store.revokeCommand(message.guild.id, member.id, command);
+    if (!removed) return reply(message, "No Grant", `<@${member.id}> does not have \`${command}\`.`);
+    await audit(message, "command_revoke", member.id, command);
+    return reply(message, "Command Revoked", `<@${member.id}> can no longer use \`${prefix}${command}\` from a grant.`);
+  }
+  store.grantCommand(message.guild.id, member.id, command, message.author.id);
+  await audit(message, "command_grant", member.id, command);
+  return reply(
+    message,
+    "Command Granted",
+    `<@${member.id}> can use \`${prefix}${command}\` without a role. Every other command stays on its normal rank.`
+  );
+}
+
 async function restart(message) {
   if (!access.canRestart(message.member)) {
     return deny(message, "Founders, Gods, and the server owner can restart the bot.");
@@ -557,6 +604,14 @@ async function handleCommand(message, args, prefix) {
   }
   if (name === "boss") {
     await handleStaff(message, "boss", args, prefix);
+    return true;
+  }
+  if (name === "grant" || name === "grants") {
+    await handleGrant(message, args, prefix, false);
+    return true;
+  }
+  if (name === "revoke" || name === "ungrant") {
+    await handleGrant(message, args, prefix, true);
     return true;
   }
   if (name === "antinuke") {

@@ -56,7 +56,7 @@ function panelEmbed(prefix, section = "overview") {
 }
 
 async function openPanel(message, prefix) {
-  if (!access.canUseForce(message.member)) {
+  if (!access.canUseForce(message.member, "forcemanage")) {
     return reply(message, "Not Allowed", "Only Founders, Gods, and the server owner can use Force Management.");
   }
   return message.reply({ embeds: [panelEmbed(prefix)], components: [panelRow()] });
@@ -65,7 +65,7 @@ async function openPanel(message, prefix) {
 async function handleSelect(interaction, prefix) {
   const member = interaction.member;
   if (member && !member.guild && interaction.guild) member.guild = interaction.guild;
-  if (!access.canUseForce(member)) {
+  if (!access.canUseForce(member, "forcemanage")) {
     await interaction.reply({
       embeds: [embed("Not Allowed", "Only Founders, Gods, and the server owner can use Force Management.")],
       flags: MessageFlags.Ephemeral
@@ -78,7 +78,7 @@ async function handleSelect(interaction, prefix) {
 }
 
 async function forceNickname(message, userArg, nickname) {
-  if (!access.canUseForce(message.member)) return reply(message, "Not Allowed", "Only Founders, Gods, and the server owner can force nicknames.");
+  if (!access.canUseForce(message.member, "forcenickname")) return reply(message, "Not Allowed", "Only Founders, Gods, and the server owner can force nicknames.");
   const member = await resolveMember(message, userArg);
   if (!member || member.user?.bot) return reply(message, "Missing User", "Mention a human member or provide their user ID.");
   if (member.id === message.guild.ownerId && message.member.id !== message.guild.ownerId) {
@@ -107,7 +107,7 @@ async function forceNickname(message, userArg, nickname) {
 }
 
 async function unforceNickname(message, userArg) {
-  if (!access.canUseForce(message.member)) return reply(message, "Not Allowed", "Only Founders, Gods, and the server owner can clear forced nicknames.");
+  if (!access.canUseForce(message.member, "unforcenickname")) return reply(message, "Not Allowed", "Only Founders, Gods, and the server owner can clear forced nicknames.");
   const member = await resolveMember(message, userArg);
   const userId = member?.id || await resolveUserId(message, userArg);
   if (!userId) return reply(message, "Missing User", "Mention a user or provide their user ID.");
@@ -140,7 +140,7 @@ async function unforceNickname(message, userArg) {
 }
 
 async function forceRoleStrip(message, userArg, roleArg) {
-  if (!access.canUseForce(message.member)) return reply(message, "Not Allowed", "Only Founders, Gods, and the server owner can block roles.");
+  if (!access.canUseForce(message.member, "forcerolestrip")) return reply(message, "Not Allowed", "Only Founders, Gods, and the server owner can block roles.");
   const member = await resolveMember(message, userArg);
   const role = await resolveRole(message, roleArg);
   if (!member || member.user?.bot) return reply(message, "Missing User", "Mention a human member or provide their user ID.");
@@ -172,7 +172,7 @@ async function forceRoleStrip(message, userArg, roleArg) {
 }
 
 async function unforceRoleStrip(message, userArg) {
-  if (!access.canUseForce(message.member)) return reply(message, "Not Allowed", "Only Founders, Gods, and the server owner can clear role blocks.");
+  if (!access.canUseForce(message.member, "unforcerolestrip")) return reply(message, "Not Allowed", "Only Founders, Gods, and the server owner can clear role blocks.");
   const userId = await resolveUserId(message, userArg);
   if (!userId) return reply(message, "Missing User", "Mention a user or provide their user ID.");
   const existing = store.listForcedRoleStrips(message.guild.id, userId);
@@ -194,7 +194,7 @@ async function unforceRoleStrip(message, userArg) {
 }
 
 async function stripRoleFromEveryone(message, roleArg) {
-  if (!access.canUseForce(message.member)) return reply(message, "Not Allowed", "Only Founders, Gods, and the server owner can strip a role from everyone.");
+  if (!access.canUseForce(message.member, "rolestrip")) return reply(message, "Not Allowed", "Only Founders, Gods, and the server owner can strip a role from everyone.");
   const role = await resolveRole(message, roleArg);
   if (!role || role.id === message.guild.id) return reply(message, "Invalid Role", "Mention a role, role ID, or role name.");
   const wait = forceCooldown(message, "rolestrip");
