@@ -460,7 +460,8 @@ test("temp VCs use configured fields and contain exactly the ten requested butto
         }[action];
         return `<:guildEmoji_${action}:${emojiId}> ${command}`;
       })
-      .join("\n")
+      .join("\n") +
+    "\n`vc transfer` @user — Give ownership to someone in the channel"
   );
   assert.deepEqual(voice.VC_INTERFACE_ICONS, {
     lock: "1472443164995358872",
@@ -924,6 +925,23 @@ test("all text commands work for the owner and reject other members", async () =
   const mentionedKick = makeMessage(guild, `-vc kick <@${target.id}>`, owner, owner, target);
   await handleCommand(mentionedKick, null, "-");
   assert.equal(target.voice.channelId, null);
+
+  const recipient = makeMember(guild, "888888888888888888");
+  const absent = makeMessage(guild, `-vc transfer ${recipient.id}`, owner, owner, recipient);
+  await handleCommand(absent, null, "-");
+  assert.match(embedTitle(absent.replies[0].embeds[0]), /Not In Channel/);
+  assert.equal(db.getTempChannel(channel.id).owner_id, owner.id);
+  recipient.voice.channel = channel;
+  recipient.voice.channelId = channel.id;
+  channel.members.set(recipient.id, recipient);
+  const transfer = makeMessage(guild, `-vc transfer ${recipient.id}`, owner, owner, recipient);
+  await handleCommand(transfer, null, "-");
+  assert.match(embedTitle(transfer.replies[0].embeds[0]), /Ownership Transferred/);
+  assert.equal(db.getTempChannel(channel.id).owner_id, recipient.id);
+  const denied = makeMessage(guild, `-vc transfer ${owner.id}`, owner, owner, owner);
+  await handleCommand(denied, null, "-");
+  assert.match(embedTitle(denied.replies[0].embeds[0]), /Owner Only/);
+  assert.equal(db.getTempChannel(channel.id).owner_id, recipient.id);
 });
 
 test("manual interface recovery uses the canonical renderer without duplicating the panel", async () => {

@@ -414,6 +414,55 @@ async function runLimitTextAction(message, value) {
   return message.reply(result("Limit Updated", `User limit set to **${limit}**.`));
 }
 
+async function transferOwnership(message, target) {
+  const channel = message.member?.voice?.channel;
+  const row = channel ? db.getTempChannel(channel.id) : null;
+  if (!channel || !row) {
+    return message.reply(result("Not Managed", "Join a managed temporary voice channel to transfer it."));
+  }
+  if (row.owner_id !== message.author.id) {
+    return message.reply(result("Owner Only", "Only the current owner can transfer this voice channel."));
+  }
+  if (!target) {
+    return message.reply(result("Missing User", "Mention the member you want to give this channel to."));
+  }
+  if (target.user?.bot) {
+    return message.reply(result("Invalid Target", "Bots cannot own a voice channel."));
+  }
+  if (target.id === message.author.id) {
+    return message.reply(result("Invalid Target", "You already own this voice channel."));
+  }
+  if (target.voice?.channelId !== channel.id && !channel.members?.has?.(target.id)) {
+    return message.reply(result("Not In Channel", "That member needs to be in your voice channel."));
+  }
+  const cooldownReply = await actionCooldownReply(message, channel, "transfer");
+  if (cooldownReply) return cooldownReply;
+  const transferred = await withChannelLock(channel.id, async () => {
+    const current = db.getTempChannel(channel.id);
+    if (!current || current.owner_id !== message.author.id) return "not-owner";
+    if (target.voice?.channelId !== channel.id && !channel.members?.has?.(target.id)) return "not-in-channel";
+    return db.transferOwner(channel.id, message.author.id, target.id) ? "transferred" : "failed";
+  });
+  if (transferred === "not-in-channel") {
+    return message.reply(result("Not In Channel", "That member needs to be in your voice channel."));
+  }
+  if (transferred !== "transferred") {
+    return message.reply(result("Owner Only", "Only the current owner can transfer this voice channel."));
+  }
+  const current = db.getTempChannel(channel.id);
+  try {
+    await renderVoiceChannelInterface(
+      channel,
+      current?.owner_id || target.id,
+      current?.interface_message_id || row.interface_message_id,
+      true
+    );
+  } catch (error) {
+    logThrottledError(`transfer-interface-refresh:${message.guild.id}`, `[temp interface refresh after transfer] ${channel.id}`, error);
+  }
+  return message.reply(result("Ownership Transferred", `<#${channel.id}> now belongs to <@${target.id}>.`));
+}
+
 async function runTargetTextAction(message, action, target) {
   const channel = message.member?.voice?.channel;
   const row = channel ? db.getTempChannel(channel.id) : null;
@@ -483,5 +532,6 @@ module.exports = {
   runTextAction: (message, action) => safelyHandleMessage(runTextAction, message, action),
   runLimitTextAction: (message, value) => safelyHandleMessage(runLimitTextAction, message, value),
   runTargetTextAction: (message, action, target) =>
-    safelyHandleMessage(runTargetTextAction, message, action, target)
+    safelyHandleMessage(runTargetTextAction, message, action, target),
+  transferOwnership: (message, target) => safelyHandleMessage(transferOwnership, message, target)
 };

@@ -222,6 +222,13 @@ module.exports = {
     `).run(ownerId, channelId);
     return result.changes > 0;
   },
+  transferOwner(channelId, fromId, toId) {
+    const result = db.prepare(`
+      UPDATE temp_channels SET owner_id = ?
+      WHERE channel_id = ? AND owner_id = ? AND deleted_at IS NULL
+    `).run(toId, channelId, fromId);
+    return result.changes > 0;
+  },
   clearOwner(channelId, ownerId) {
     return db.prepare(`
       UPDATE temp_channels SET owner_id = NULL

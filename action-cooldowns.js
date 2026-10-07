@@ -8,6 +8,7 @@ const ACTION_COOLDOWNS_MS = {
   unban: 1000,
   permit: 1000,
   claim: 30000,
+  transfer: 3000,
   limit: 1000,
   interfaceRefresh: 3000
 };

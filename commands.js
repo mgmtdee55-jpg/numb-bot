@@ -138,6 +138,15 @@ async function handleCommand(message, client, prefix = "-") {
     if (sub === "limit") {
       return controls.runLimitTextAction(message, args[2]);
     }
+    if (sub === "transfer") {
+      const target = await resolveMember(message, args[2]);
+      if (!target) {
+        return message.reply({
+          embeds: [embed("Missing User", "Mention the member you want to give this channel to.")]
+        });
+      }
+      return controls.transferOwnership(message, target);
+    }
     if (["kick", "ban", "unban", "permit"].includes(sub)) {
       const target = await resolveMember(message, args[2]);
       if (!target) {
@@ -157,6 +166,7 @@ async function handleCommand(message, client, prefix = "-") {
               "`-vc lock|unlock|ghost|unghost` · Manage your channel",
               "`-vc kick|ban|unban|permit @user|user-id` · Manage a member",
               "`-vc claim` · Claim an unowned channel",
+              "`-vc transfer @user` · Give your channel to someone in it",
               "`-vc limit <0-99>` · Set your channel limit",
               "`-ban` / `-fakepermissions` · Server bans (fake permissions required)"
             ].join("\n")

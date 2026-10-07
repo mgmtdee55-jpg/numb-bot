@@ -94,11 +94,12 @@ function panelEmbed(ownerId, guildIconUrl = null, emojiStrings = {}) {
     unban: "`vc unban` @user — Allow a banned user to join",
     permit: "`vc permit` @user — Permit a user to join",
     claim: "`vc claim` — Take ownership of an empty channel",
-    limit: "`vc limit` `<number>` — Set user limit"
+    limit: "`vc limit` `<number>` — Set user limit",
+    transfer: "`vc transfer` @user — Give ownership to someone in the channel"
   };
   const commandList = [
     ...Object.entries(commandDescriptions).map(([action, description]) =>
-      `${emojiStrings[action] || ""} ${description}`
+      emojiStrings[action] ? `${emojiStrings[action]} ${description}` : description
     )
   ].join("\n");
   const embed = new EmbedBuilder()

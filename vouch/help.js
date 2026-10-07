@@ -90,6 +90,7 @@ function voiceText(prefix) {
     `\`${p}vc lock|unlock|ghost|unghost\``,
     `\`${p}vc kick|ban|unban|permit @user\``,
     `\`${p}vc claim\``,
+    `\`${p}vc transfer @user\` — give your VC to someone in it`,
     `\`${p}vc limit <0-99>\``,
     `\`${p}mvc\` — voice stats`,
     `\`${p}send interface\` — restore a channel interface`
