@@ -26,6 +26,7 @@ const vouch = require("./vouch");
 const systems = require("./systems");
 const afk = require("./afk");
 const extras = require("./extras");
+const snipe = require("./snipe");
 const personalBan = require("./personal-ban");
 const { card, loadEmojis, emojisLoaded } = require("./feedback");
 let cleanupRunning = false;
@@ -94,7 +95,8 @@ async function runCommand(message, prefix, options) {
 }
 
 client.on("messageCreate", async (message) => {
-  if (!message.guild || message.author.bot) return;
+  if (!message.guild || message.author?.bot) return;
+  snipe.remember(message);
   await emojisLoaded();
   const prefix = vouch.getPrefix(message.guild.id);
   try {
@@ -111,6 +113,7 @@ client.on("messageUpdate", async (before, after) => {
   try {
     if (after.partial) after = await after.fetch();
     if (!after?.guild || after.author?.bot) return;
+    snipe.remember(after);
     if (!after.member) after.member = await after.guild.members.fetch(after.author.id).catch(() => null);
     await emojisLoaded();
     const prefix = vouch.getPrefix(after.guild.id);
@@ -133,6 +136,7 @@ client.on("voiceStateUpdate", createVoiceStateHandler({
 }));
 
 client.on("messageDelete", async (message) => {
+  snipe.capture(message);
   try {
     if (!message.guild) return;
     const temp = db.getTempChannel(message.channelId);
@@ -149,6 +153,10 @@ client.on("messageDelete", async (message) => {
   } catch (error) {
     console.error("[interface recovery after deletion]", error);
   }
+});
+
+client.on("messageDeleteBulk", (messages) => {
+  snipe.captureMany(messages);
 });
 
 client.on("channelDelete", async (channel) => {

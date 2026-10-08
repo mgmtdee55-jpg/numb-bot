@@ -559,8 +559,22 @@ test("force management blocks roles and restores forced nicknames without a puni
 
   const cleared = await run(group.guild, group.owner, `-unforcestrip ${TARGET}`);
   assert.equal(titleOf(cleared), "Role Blocks Cleared");
+  group.guild.fetchAuditLogs = async () => ({
+    entries: new Map([[
+      "role-add",
+      {
+        id: "role-add",
+        targetId: TARGET,
+        createdTimestamp: Date.now() - (2 * 60 * 60 * 1000),
+        changes: [{ key: "$add", new: [{ id: MEMBER_ROLE }] }]
+      }
+    ]])
+  });
   const stripped = await run(group.guild, group.owner, "-rolestrip Member");
+  assert.match(stripped.replies[0].embeds[0].data.description, /currently taking all members from this role my boy, ill update ya when done/);
   assert.equal(titleOf(stripped), "Role Stripped");
+  assert.match(textOf(stripped), new RegExp(`<@${TARGET}> — 2 hours`));
+  assert.match(textOf(stripped), new RegExp(`<@${OTHER}> — not in the audit log`));
   assert.equal(group.target.roles.cache.has(MEMBER_ROLE), false);
   assert.equal(group.other.roles.cache.has(MEMBER_ROLE), false);
 

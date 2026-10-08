@@ -478,12 +478,63 @@ test("channel controls lock, hide, lock every text channel, and nuke", async () 
   assert.ok(edits.every((edit) => edit.data.SendMessages === false));
   assert.equal(titleOf(await run(guild, owner, "-unlockall")), "Text Channels Unlocked");
 
+  const declined = makeMessage(guild, "-nuke", owner);
+  declined.channel = general;
+  await handleCommand(declined, guild.client, "-");
+  assert.equal(general.deleted, undefined);
+  assert.match(declined.replies[0].embeds[0].data.description, /are you sure you want to nuke this channel/);
+  const declineId = declined.replies[0].components[0].components.find((button) => button.data.label === "Decline").data.custom_id;
+  const decline = {
+    customId: declineId,
+    user: { id: owner.id },
+    member: owner,
+    guild,
+    channel: general,
+    channelId: general.id,
+    async update(payload) { this.updated = payload; },
+    async reply(payload) { this.repliedWith = payload; }
+  };
+  assert.equal(await require("../systems/channels").handleInteraction(decline), true);
+  assert.match(decline.updated.embeds[0].data.description, /not nuked/);
+  assert.equal(general.deleted, undefined);
+
   const message = makeMessage(guild, "-nuke", owner);
   message.channel = general;
   await handleCommand(message, guild.client, "-");
+  const confirmId = message.replies[0].components[0].components.find((button) => button.data.label === "Confirm").data.custom_id;
+  const confirm = {
+    customId: confirmId,
+    user: { id: owner.id },
+    member: owner,
+    guild,
+    channel: general,
+    channelId: general.id,
+    async update(payload) { this.updated = payload; },
+    async reply(payload) { this.repliedWith = payload; }
+  };
+  assert.equal(await require("../systems/channels").handleInteraction(confirm), true);
   assert.equal(general.deleted, true);
   assert.equal(embedTitle(general.copy.sent[0].embeds[0]), "Channel Nuked");
   assert.match(general.copy.sent[0].embeds[0].data.description, /#general/);
+});
+
+test("vc reset asks before it answers", async () => {
+  const guild = makeGuild();
+  const owner = makeMember(guild, OWNER, { name: "owner" });
+  const member = makeMember(guild, MEMBER, { name: "member" });
+  assert.equal(titleOf(await run(guild, member, "-vc reset")), "Owner Only");
+  const message = await run(guild, owner, "-vc reset");
+  assert.match(message.replies[0].embeds[0].data.description, /are you sure you want to reset voice setup/);
+  const confirmId = message.replies[0].components[0].components.find((button) => button.data.label === "Confirm").data.custom_id;
+  const confirm = {
+    customId: confirmId,
+    user: { id: owner.id },
+    member: owner,
+    guild,
+    async update(payload) { this.updated = payload; }
+  };
+  assert.equal(await require("../commands").handleVcReset(confirm), true);
+  assert.match(confirm.updated.embeds[0].data.description, /no longer deletes channel history/);
 });
 
 test("showallcommands pages one category at a time", async () => {
@@ -510,7 +561,7 @@ test("showallcommands pages one category at a time", async () => {
     "VC Ranks", "Vouch", "Staff", "Godmode", "Force", "Social", "Vanity", "Giveaways", "Bot"
   ]);
   const text = pages.map((page) => page.description).join("\n");
-  for (const command of ["-ban", "-pban", "-antinuke vouch limit view", "-role limit set", "-nuke", "-ceo add", "-showallcommands", "-instagram", "-giveaways start", "-embedcreate", "-modlogreset", "-voiceshield"]) {
+  for (const command of ["-ban", "-pban", "-antinuke vouch limit view", "-role limit set", "-nuke", "-ceo add", "-showallcommands", "-instagram", "-giveaways start", "-embedcreate", "-modlogreset", "-voiceshield", "-snipe", "-clearsnipe"]) {
     assert.ok(text.includes(`\`${command}\``), command);
   }
   assert.doesNotMatch(text, /vouch check|vouch wipeall|limitedroles|setvouchlogs/);

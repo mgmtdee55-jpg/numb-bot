@@ -43,6 +43,7 @@ const WHO = {
   forcemanage: "Founder+", forcenickname: "Founder+", unforcenickname: "Founder+",
   forcerolestrip: "Founder+", unforcerolestrip: "Founder+", rolestrip: "Founder+",
   help: "Everyone", showallcommands: "Everyone", afk: "Everyone", "afk mentions": "Everyone", setprefix: "Founder+",
+  snipe: "Everyone", s: "Everyone", clearsnipe: "Everyone", cs: "Everyone",
   "alias add": "Founder+", "alias remove": "Founder+", "alias removeall": "Founder+", "alias reset": "Founder+",
   "alias view": "Founder+", "alias list": "Founder+", restart: "Founder+",
   embedcreate: "Everyone", instagram: "Everyone", tiktok: "Everyone", roblox: "Everyone",
@@ -88,7 +89,11 @@ function categories(prefix) {
       ["avatar", "show an avatar"],
       ["banner", "show a banner"],
       ["serverinfo", "server details"],
-      ["userinfo", "user details"]
+      ["userinfo", "user details"],
+      ["snipe", "deleted messages from the last 2 hours"],
+      ["s", "alias of snipe"],
+      ["clearsnipe", "clear deleted message history"],
+      ["cs", "alias of clearsnipe"]
     ])],
     ["Channels", block(prefix, [
       ["lock", "lock a channel"],

@@ -6,7 +6,7 @@ const { resolveMember, resolveRole, resolveUserId } = require("./resolve");
 const { mentionUser } = require("./util");
 const { embed, reply } = require("./ui");
 const cooldowns = require("../systems/cooldowns");
-const { ActionRowBuilder, StringSelectMenuBuilder, MessageFlags } = require("discord.js");
+const { ActionRowBuilder, AuditLogEvent, StringSelectMenuBuilder, MessageFlags } = require("discord.js");
 
 const NICK_LIMIT = 32;
 
@@ -193,6 +193,49 @@ async function unforceRoleStrip(message, userArg) {
   return reply(message, "Role Blocks Cleared", `Removed **${existing.length}** role block(s). Those roles were not given back.`);
 }
 
+function heldFor(since, now = Date.now()) {
+  if (!since) return "not in the audit log";
+  const minutes = Math.floor(Math.max(0, now - since) / 60000);
+  if (minutes < 1) return "less than a minute";
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"}`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return `${hours} hour${hours === 1 ? "" : "s"}`;
+  const days = Math.floor(hours / 24);
+  return `${days} day${days === 1 ? "" : "s"}`;
+}
+
+async function roleAddTimes(guild, roleId) {
+  const since = new Map();
+  if (typeof guild.fetchAuditLogs !== "function") return since;
+  let before;
+  for (let page = 0; page < 5; page += 1) {
+    const logs = await guild.fetchAuditLogs({
+      type: AuditLogEvent.MemberRoleUpdate,
+      limit: 100,
+      ...(before ? { before } : {})
+    }).catch(() => null);
+    const entries = [...(logs?.entries?.values?.() || [])];
+    if (!entries.length) break;
+    for (const entry of entries) {
+      const targetId = entry.targetId || entry.target?.id;
+      const added = (entry.changes || []).some((change) => change.key === "$add" && (change.new || []).some((role) => role.id === roleId));
+      if (added && targetId && !since.has(targetId)) since.set(targetId, entry.createdTimestamp || 0);
+    }
+    before = entries.at(-1)?.id;
+    if (entries.length < 100 || !before) break;
+  }
+  return since;
+}
+
+async function deliver(message, pending, title, description) {
+  const payload = {
+    embeds: [embed(title, description, { guild: message.guild })],
+    allowedMentions: { parse: [] }
+  };
+  if (typeof pending?.edit === "function") return pending.edit(payload);
+  return message.reply(payload);
+}
+
 async function stripRoleFromEveryone(message, roleArg) {
   if (!access.canUseForce(message.member, "rolestrip")) return reply(message, "Not Allowed", "Only Founders, Gods, and the server owner can strip a role from everyone.");
   const role = await resolveRole(message, roleArg);
@@ -202,19 +245,21 @@ async function stripRoleFromEveryone(message, roleArg) {
   if (!roles.botCanManageRole(message.guild, role)) {
     return reply(message, "Cannot Manage Role", "Move my role above that role and grant me Manage Roles.");
   }
+  const pending = await reply(message, "Role Strip", "currently taking all members from this role my boy, ill update ya when done.");
   if (typeof message.guild.members.fetch === "function" && (message.guild.memberCount || 0) <= 2000) {
     await message.guild.members.fetch().catch(() => null);
   }
   const holders = [...message.guild.members.cache.values()].filter((member) => member.roles?.cache?.has(role.id));
+  const heldSince = await roleAddTimes(message.guild, role.id);
   const vouchRole = store.getConfig(message.guild.id).vouch_role_id === role.id;
-  let removed = 0;
+  const removedMembers = [];
   let failed = 0;
   let closed = 0;
   for (const member of holders) {
     if (vouchRole && store.deactivateVouch(message.guild.id, member.id, message.author.id, "rolestrip")) closed += 1;
     try {
       await roles.withRateLimit(() => roles.removeRole(member, role, `Role strip by ${message.author.id}`));
-      removed += 1;
+      removedMembers.push(member);
     } catch (error) {
       failed += 1;
     }
@@ -223,11 +268,32 @@ async function stripRoleFromEveryone(message, roleArg) {
     action: "role_strip",
     actorId: message.author.id,
     targetId: role.id,
-    reason: `Stripped ${role.name} from ${removed} member(s)`,
-    details: { removed, failed, closed }
+    reason: `Stripped ${role.name} from ${removedMembers.length} member(s)`,
+    details: { removed: removedMembers.length, failed, closed }
   });
   const vouchNote = vouchRole ? ` Closed **${closed}** active vouch(es).` : "";
-  return reply(message, "Role Stripped", `Removed **${role.name}** from **${removed}** member(s).${failed ? ` ${failed} failed.` : ""}${vouchNote}`);
+  const failedNote = failed ? ` ${failed} failed.` : "";
+  const lines = removedMembers.map((member) => `<@${member.id}> — ${heldFor(heldSince.get(member.id))}`);
+  let summary = `Removed **${role.name}** from **${removedMembers.length}** member(s).${failedNote}${vouchNote}`;
+  const blocks = [];
+  for (const line of lines) {
+    const next = `${summary}\n${line}`;
+    if (next.length > 3800) {
+      blocks.push(summary);
+      summary = line;
+    } else {
+      summary = next;
+    }
+  }
+  blocks.push(summary);
+  await deliver(message, pending, "Role Stripped", blocks[0]);
+  for (const extra of blocks.slice(1)) {
+    await message.reply({
+      embeds: [embed("Role Stripped", extra, { guild: message.guild })],
+      allowedMentions: { parse: [] }
+    });
+  }
+  return true;
 }
 
 async function dispatchForceStrip(message, first, second) {

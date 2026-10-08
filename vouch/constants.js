@@ -46,7 +46,7 @@ const BUILTIN_COMMANDS = new Set([
   "muteall", "unmuteall", "shield", "unshield", "voiceshield", "follow", "unfollow", "chain", "bring",
   "inspect", "forceclaim", "stfu", "unstfu", "stsu", "unstsu", "modsetup", "modlogreset", "voice", "rankinfo", "unrank", "afk",
   "embedcreate", "instagram", "ig", "insta", "tiktok", "roblox", "giveaways", "gw", "voicemaster", "set",
-  "vanity", "vanitysetup"
+  "vanity", "vanitysetup", "snipe", "s", "clearsnipe", "cs"
 ]);
 
 const RANK = { user: 0, giver: 1, admin: 2, os: 3, owner: 4 };

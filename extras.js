@@ -6,6 +6,7 @@ const vcConfig = require("./vc-config");
 const vanity = require("./vanity");
 const catalog = require("./vouch/catalog");
 const vouch = require("./vouch");
+const snipe = require("./snipe");
 
 function commandName(args, prefix) {
   const head = String(args[0] || "").toLowerCase();
@@ -68,6 +69,10 @@ async function handleCommand(message, args, prefix) {
     await message.reply(catalog.pageMessage(prefix, 0, message.member));
     return true;
   }
+  if (name === "snipe" || name === "s" || name === "clearsnipe" || name === "cs") {
+    await snipe.handleCommand(message, name);
+    return true;
+  }
   return false;
 }
 
@@ -89,6 +94,9 @@ async function handleInteraction(interaction) {
   if (id.startsWith("spanter:gw:")) return giveaways.handleButton(interaction);
   if (id === "spanter:vcconfig:setup") return vcConfig.handleButton(interaction);
   if (id.startsWith("spanter:vanity:")) return vanity.handleInteraction(interaction);
+  if (id.startsWith("spanter:snipe:")) return snipe.handleButton(interaction);
+  if (id.startsWith("spanter:confirm:nuke:")) return require("./systems/channels").handleInteraction(interaction);
+  if (id.startsWith("spanter:confirm:vcreset:")) return require("./commands").handleVcReset(interaction);
   return false;
 }
 

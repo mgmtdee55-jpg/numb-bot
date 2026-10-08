@@ -1,4 +1,4 @@
-const { ChannelType, EmbedBuilder } = require("discord.js");
+const { ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, EmbedBuilder, MessageFlags } = require("discord.js");
 const db = require("./db");
 const setupWizard = require("./setup-wizard");
 const controls = require("./interface");
@@ -150,9 +150,7 @@ async function handleCommand(message, client, prefix = "-", options = {}) {
       if (!ownerOnly(message)) {
         return message.reply({ embeds: [embed("Owner Only", "Only the server owner can use `-vc reset`.")] });
       }
-      return message.reply({
-        embeds: [embed("History Preserved", "Reset no longer deletes channel history or Discord resources. Use `-vc setup` to safely reconfigure this server.")]
-      });
+      return askVcReset(message);
     }
     if (["lock", "unlock", "ghost", "unghost", "claim"].includes(sub)) {
       return controls.runTextAction(message, sub);
@@ -233,4 +231,66 @@ async function handleCommand(message, client, prefix = "-", options = {}) {
   }
 }
 
-module.exports = { handleCommand, editedCommandContent };
+const VC_RESET_MS = 60_000;
+
+function askVcReset(message) {
+  const expires = Date.now() + VC_RESET_MS;
+  const tail = `${message.author.id}:${expires}`;
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`spanter:confirm:vcreset:yes:${tail}`).setLabel("Confirm").setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId(`spanter:confirm:vcreset:no:${tail}`).setLabel("Decline").setStyle(ButtonStyle.Secondary)
+  );
+  return message.reply({
+    embeds: [embed("Voice Reset", "are you sure you want to reset voice setup?", message.guild)],
+    components: [row]
+  });
+}
+
+function parseVcReset(customId) {
+  const prefix = "spanter:confirm:vcreset:";
+  if (!customId?.startsWith(prefix)) return null;
+  const [answer, userId, expires] = customId.slice(prefix.length).split(":");
+  if ((answer !== "yes" && answer !== "no") || !/^\d{17,20}$/.test(userId)) return null;
+  return { answer, userId, expires: Number(expires) };
+}
+
+async function handleVcReset(interaction) {
+  const parsed = parseVcReset(interaction.customId);
+  if (!parsed) return false;
+  const userId = interaction.user?.id;
+  if (userId !== parsed.userId) {
+    await interaction.reply({
+      embeds: [embed("Not Yours", "Only the person who ran this can confirm or decline.", interaction.guild)],
+      flags: MessageFlags.Ephemeral
+    }).catch(() => null);
+    return true;
+  }
+  if (!Number.isFinite(parsed.expires) || Date.now() > parsed.expires) {
+    await interaction.update({
+      embeds: [embed("Expired", "That confirmation expired. Run `-vc reset` again.", interaction.guild)],
+      components: []
+    });
+    return true;
+  }
+  if (parsed.answer === "no") {
+    await interaction.update({
+      embeds: [embed("Reset Declined", "Voice setup was not reset.", interaction.guild)],
+      components: []
+    });
+    return true;
+  }
+  if (userId !== interaction.guild?.ownerId) {
+    await interaction.update({
+      embeds: [embed("Owner Only", "Only the server owner can use `-vc reset`.", interaction.guild)],
+      components: []
+    });
+    return true;
+  }
+  await interaction.update({
+    embeds: [embed("History Preserved", "Reset no longer deletes channel history or Discord resources. Use `-vc setup` to safely reconfigure this server.", interaction.guild)],
+    components: []
+  });
+  return true;
+}
+
+module.exports = { handleCommand, editedCommandContent, handleVcReset };

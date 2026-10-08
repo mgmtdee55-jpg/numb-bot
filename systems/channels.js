@@ -1,8 +1,10 @@
-const { ChannelType, PermissionFlagsBits } = require("discord.js");
+const { ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, MessageFlags, PermissionFlagsBits } = require("discord.js");
 const access = require("./access");
 const store = require("./store");
 const cooldowns = require("./cooldowns");
 const { embed, reply } = require("../vouch/ui");
+
+const CONFIRM_MS = 60_000;
 
 function deny(message) {
   return reply(message, "Access Denied", "Founders, Gods, and the server owner can control channels.");
@@ -126,10 +128,56 @@ async function setAllText(message, locked) {
   );
 }
 
+function confirmRow(channelId, userId) {
+  const expires = Date.now() + CONFIRM_MS;
+  const tail = `${channelId}:${userId}:${expires}`;
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`spanter:confirm:nuke:yes:${tail}`).setLabel("Confirm").setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId(`spanter:confirm:nuke:no:${tail}`).setLabel("Decline").setStyle(ButtonStyle.Secondary)
+  );
+}
+
+function parseConfirm(customId) {
+  const prefix = "spanter:confirm:nuke:";
+  if (!customId?.startsWith(prefix)) return null;
+  const [answer, channelId, userId, expires] = customId.slice(prefix.length).split(":");
+  if ((answer !== "yes" && answer !== "no") || !/^\d{17,20}$/.test(channelId) || !/^\d{17,20}$/.test(userId)) return null;
+  return { answer, channelId, userId, expires: Number(expires) };
+}
+
+function nukeWait(wait) {
+  return `Nuke can be used again in **${Math.max(1, Math.ceil(wait / 1000))}** seconds.`;
+}
+
+async function performNuke(source, channel, actorId) {
+  let copy;
+  try {
+    copy = await channel.clone({ reason: `Nuked by ${actorId}` });
+    if (Number.isInteger(channel.position) && typeof copy.setPosition === "function") {
+      await copy.setPosition(channel.position).catch(() => null);
+    }
+  } catch (error) {
+    const failed = { embeds: [embed("Nuke Failed", "I could not clone that channel. Check my Manage Channels permission and role position.")], components: [] };
+    if (typeof source.message?.edit === "function") await source.message.edit(failed).catch(() => null);
+    return false;
+  }
+  const label = channel.name ? `#${channel.name}` : `<#${channel.id}>`;
+  const description = `${label} was cloned and the old one was deleted.`;
+  const sameChannel = (source.channel?.id || source.channelId) === channel.id;
+  if (sameChannel && typeof copy.send === "function") {
+    await copy.send({ embeds: [embed("Channel Nuked", description)] }).catch(() => null);
+  }
+  await channel.delete(`Nuked by ${actorId}`);
+  if (!sameChannel && typeof source.message?.edit === "function") {
+    await source.message.edit({ embeds: [embed("Channel Nuked", description)], components: [] }).catch(() => null);
+  }
+  return true;
+}
+
 async function nuke(message, args) {
-  if (!(await ensureAccess(message, "nuke"))) return;
-  const wait = cooldowns.consume(message.guild.id, message.author.id, "nuke");
-  if (wait) return reply(message, "Please Wait", `Nuke can be used again in **${Math.max(1, Math.ceil(wait / 1000))}** seconds.`);
+  if (!access.canUseChannels(message.member, "nuke")) return deny(message);
+  const wait = cooldowns.peek(message.guild.id, message.author.id, "nuke");
+  if (wait) return reply(message, "Please Wait", nukeWait(wait));
   const channel = await resolveChannel(message, args[1]);
   if (!channel || channel.type === ChannelType.GuildCategory || typeof channel.clone !== "function" || typeof channel.delete !== "function") {
     return reply(message, "Missing Channel", "Mention a text or voice channel, or run this in the channel you want to nuke.");
@@ -138,24 +186,49 @@ async function nuke(message, args) {
   if (me?.permissions && !me.permissions.has(PermissionFlagsBits.ManageChannels) && !me.permissions.has(PermissionFlagsBits.Administrator)) {
     return reply(message, "Bot Missing Permission", "I need Manage Channels to nuke a channel.");
   }
-  let copy;
-  try {
-    copy = await channel.clone({ reason: `Nuked by ${message.author.id}` });
-    if (Number.isInteger(channel.position) && typeof copy.setPosition === "function") {
-      await copy.setPosition(channel.position).catch(() => null);
-    }
-  } catch (error) {
-    return reply(message, "Nuke Failed", "I could not clone that channel. Check my Manage Channels permission and role position.");
-  }
   const label = channel.name ? `#${channel.name}` : `<#${channel.id}>`;
-  const description = `${label} was cloned and the old one was deleted.`;
-  const sameChannel = message.channel?.id === channel.id;
-  if (sameChannel && typeof copy.send === "function") {
-    await copy.send({ embeds: [embed("Channel Nuked", description)] }).catch(() => null);
+  return message.reply({
+    embeds: [embed("Nuke", `are you sure you want to nuke this channel?\n${label}`)],
+    components: [confirmRow(channel.id, message.author.id)]
+  });
+}
+
+async function handleInteraction(interaction) {
+  const parsed = parseConfirm(interaction.customId);
+  if (!parsed) return false;
+  const userId = interaction.user?.id;
+  if (userId !== parsed.userId) {
+    await interaction.reply({
+      embeds: [embed("Not Yours", "Only the person who ran this can confirm or decline.")],
+      flags: MessageFlags.Ephemeral
+    }).catch(() => null);
+    return true;
   }
-  await channel.delete(`Nuked by ${message.author.id}`);
-  if (sameChannel) return true;
-  return reply(message, "Channel Nuked", description);
+  if (!Number.isFinite(parsed.expires) || Date.now() > parsed.expires) {
+    await interaction.update({ embeds: [embed("Expired", "That confirmation expired. Run `-nuke` again.")], components: [] });
+    return true;
+  }
+  if (parsed.answer === "no") {
+    await interaction.update({ embeds: [embed("Nuke Declined", "This channel was not nuked.")], components: [] });
+    return true;
+  }
+  const channel = interaction.guild.channels.cache.get(parsed.channelId) || await interaction.guild.channels.fetch(parsed.channelId).catch(() => null);
+  if (!channel || typeof channel.clone !== "function" || typeof channel.delete !== "function") {
+    await interaction.update({ embeds: [embed("Missing Channel", "That channel is gone.")], components: [] });
+    return true;
+  }
+  if (!access.canUseChannels(interaction.member, "nuke")) {
+    await interaction.update({ embeds: [embed("Access Denied", "Founders, Gods, and the server owner can nuke a channel.")], components: [] });
+    return true;
+  }
+  const wait = cooldowns.consume(interaction.guild.id, userId, "nuke");
+  if (wait) {
+    await interaction.update({ embeds: [embed("Please Wait", nukeWait(wait))], components: [] });
+    return true;
+  }
+  await interaction.update({ embeds: [embed("Nuke", "Nuking this channel...")], components: [] });
+  await performNuke(interaction, channel, userId);
+  return true;
 }
 
 async function handleCommand(message, name, args) {
@@ -169,4 +242,4 @@ async function handleCommand(message, name, args) {
   return false;
 }
 
-module.exports = { handleCommand };
+module.exports = { handleCommand, handleInteraction };

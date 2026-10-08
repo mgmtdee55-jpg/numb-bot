@@ -107,6 +107,8 @@ function botText(prefix) {
   return [
     `\`${p}help\` / \`${p}bothelp\` — category menu`,
     `\`${p}showallcommands\` — every command, grouped`,
+    `\`${p}snipe\` / \`${p}s\` — deleted messages in this channel from the last 2 hours`,
+    `\`${p}clearsnipe\` / \`${p}cs\` — clear that snipe history`,
     `\`${p}setprefix <prefix>\` — persists after restart`,
     `\`${p}embedcreate\` — build an embed`,
     `\`${p}alias add <shortcut> <command>\``,
