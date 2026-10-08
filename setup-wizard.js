@@ -464,6 +464,13 @@ async function confirm(interaction, wizard) {
 
     destroySession(wizard);
     try {
+      const vcFeatures = require("./vc-features");
+      const send = typeof interaction.followUp === "function" ? (payload) => interaction.followUp(payload) : null;
+      if (send) await vcFeatures.offer(wizard.guild, wizard.userId, send);
+    } catch (error) {
+      console.error(`[voice feature prompt] ${wizard.guild.id}`, error);
+    }
+    try {
       await interaction.editReply({
         embeds: [embed("VoiceMaster Setup Complete", configSummary(wizard.guild, {
           ...wizard.values,

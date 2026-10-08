@@ -475,6 +475,8 @@ async function cleanupTempChannelUnlocked(guild, row, config = db.getConfig(guil
     if (row.empty_since === null) db.setEmptySince(row.channel_id, emptySince);
     const cleanupMs = Math.max(0, config?.cleanup_seconds ?? 0) * 1000;
     if (Date.now() - emptySince < cleanupMs || channelHasOccupant(channel)) return;
+    if ((channel.members?.size || 0) > 0 || channelHasOccupant(channel)) return;
+    if (require("./vc-features").isProtectedChannel(guild.id, channel.id)) return;
 
     await channel.delete("VoiceMaster: empty temporary channel cleanup");
     db.markTempDeleted(row.channel_id);

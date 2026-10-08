@@ -146,6 +146,12 @@ async function handleCommand(message, client, prefix = "-", options = {}) {
       }
       return setupWizard.start(message);
     }
+    if (sub === "edit") {
+      if (!ownerOnly(message)) {
+        return message.reply({ embeds: [embed("Owner Only", "Only the server owner can use `-vc edit`.")] });
+      }
+      return require("./vc-features").start(message);
+    }
     if (sub === "reset") {
       if (!ownerOnly(message)) {
         return message.reply({ embeds: [embed("Owner Only", "Only the server owner can use `-vc reset`.")] });
@@ -287,7 +293,7 @@ async function handleVcReset(interaction) {
     return true;
   }
   await interaction.update({
-    embeds: [embed("History Preserved", "Reset no longer deletes channel history or Discord resources. Use `-vc setup` to safely reconfigure this server.", interaction.guild)],
+    embeds: [embed("History Preserved", "Reset no longer deletes channel history or Discord resources. Channels with people in them are never deleted. Use `-vc setup` to safely reconfigure this server.", interaction.guild)],
     components: []
   });
   return true;

@@ -3,6 +3,7 @@ const db = require("../db");
 const store = require("./store");
 const access = require("./access");
 const cooldowns = require("./cooldowns");
+const stats = require("../stats");
 const { reply } = require("../vouch/ui");
 
 const moving = new Map();
@@ -150,9 +151,39 @@ async function setVoiceFlag(message, user, flag, enabled, title) {
   return reply(message, title, `${enabled ? "Enabled" : "Cleared"} **${flag}** for <@${user.id}>.`);
 }
 
-async function muteChannel(message, muted) {
+async function resolveVoiceChannel(message, argument) {
+  const mentioned = message.mentions?.channels?.first?.();
+  if (mentioned?.type === ChannelType.GuildVoice || mentioned?.type === ChannelType.GuildStageVoice) return mentioned;
+  const id = String(argument || "").replace(/[<#>]/g, "");
+  if (!/^\d{17,20}$/.test(id)) return null;
+  const channel = message.guild.channels.cache.get(id) || await message.guild.channels.fetch(id).catch(() => null);
+  if (channel?.type === ChannelType.GuildVoice || channel?.type === ChannelType.GuildStageVoice) return channel;
+  return null;
+}
+
+async function unmuteChannel(message, channel) {
+  const members = occupants(channel);
+  let changed = 0;
+  for (const member of members) {
+    if (member.user?.bot) continue;
+    const guard = store.getGuard(message.guild.id, member.id);
+    if (guard?.stfu) continue;
+    if (!member.voice?.serverMute) continue;
+    if (typeof member.voice?.setMute !== "function") continue;
+    await setMuteSafe(member, false, "Voice unmuteall");
+    changed += 1;
+  }
+  return reply(message, "Channel Unmuted", `Unmuted **${changed}** member(s) in <#${channel.id}>.`);
+}
+
+async function muteChannel(message, muted, channelArgument) {
   const wait = cooldowns.consume(message.guild.id, message.author.id, muted ? "muteall" : "unmuteall");
   if (wait) return reply(message, "Please Wait", cooldowns.waitText(wait));
+  if (!muted && channelArgument) {
+    const selected = await resolveVoiceChannel(message, channelArgument);
+    if (!selected) return reply(message, "Missing Channel", "Mention a voice channel or paste its ID.");
+    return unmuteChannel(message, selected);
+  }
   const channel = currentChannel(message.member);
   if (!channel) return reply(message, "Join a Voice Channel", "Join the voice channel you want to mute.");
   const members = occupants(channel);
@@ -163,6 +194,7 @@ async function muteChannel(message, muted) {
     if (guard?.shield || guard?.godmode || guard?.stfu) continue;
     if (typeof member.voice?.setMute !== "function") continue;
     await setMuteSafe(member, muted, muted ? "Voice muteall" : "Voice unmuteall");
+    if (muted) stats.recordAction(message.guild.id, message.author.id, member.id, "mute", "Voice mute");
     changed += 1;
   }
   return reply(message, muted ? "Channel Muted" : "Channel Unmuted", `Updated **${changed}** member(s) in <#${channel.id}>. Protected members were left alone.`);
@@ -219,6 +251,7 @@ async function stsu(message, target, enabled) {
     return reply(message, "Shielded", "That member is shielded.");
   }
   store.saveGuard(message.guild.id, target.id, { stfu: enabled, godmode: enabled ? false : undefined });
+  if (enabled) stats.recordAction(message.guild.id, message.author.id, target.id, "mute", "Server mute");
   if (target.voice?.channelId) await setMuteSafe(target, enabled, enabled ? "STSU" : "STSU cleared");
   return reply(message, enabled ? "STSU" : "STSU Cleared", `<@${target.id}> ${enabled ? "stays server-muted until -unstsu" : "is no longer force-muted"}.`);
 }
@@ -239,7 +272,7 @@ async function runRankCommand(message, command, target, channelArgument) {
     return setVoiceFlag(message, user, "shield", command === "shield", command === "shield" ? "Shielded" : "Shield Removed");
   }
   if (command === "muteall") return muteChannel(message, true);
-  if (command === "unmuteall") return muteChannel(message, false);
+  if (command === "unmuteall") return muteChannel(message, false, channelArgument);
   if (command === "follow") return follow(message, target, false);
   if (command === "chain") return follow(message, target, true);
   if (command === "unfollow") {

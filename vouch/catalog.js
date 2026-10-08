@@ -7,6 +7,9 @@ const WHO = {
   banned: "Gods+", softban: "Gods+", tempban: "Gods+", unban: "Gods+", unbanall: "Gods+",
   hardban: "Gods+", foreverban: "Gods+", foreverunban: "Gods+", pban: "Gods+", "personal ban": "Gods+", "role add": "Gods+",
   "fp add": "Gods+", "fp remove": "Gods+", "fp list": "Gods+", "fp reset": "Gods+", "fp template": "Gods+",
+  serversetup: "Gods+", jail: "Gods+", unjail: "Gods+", cmute: "Gods+", chatmute: "Gods+",
+  imute: "Gods+", imagemute: "Gods+", rmute: "Gods+", reactionmute: "Gods+",
+  mute: "Gods+", servermute: "Gods+", "cam set": "Gods+", camblacklist: "Gods+", "camblacklist set": "Gods+",
   avatar: "Everyone", banner: "Everyone", serverinfo: "Everyone", userinfo: "Everyone",
   lock: "Founder+", unlock: "Founder+", hide: "Founder+", unhide: "Founder+",
   lockall: "Founder+", unlockall: "Founder+", nuke: "Founder+ · 25s", lockdown: "Founder+", unlockdown: "Founder+",
@@ -17,7 +20,7 @@ const WHO = {
   "vc ghost": "Premium+", "vc unghost": "Premium+", "vc kick": "Everyone", "vc reject": "Everyone", "vc ban": "Everyone",
   voiceshield: "Gods+",
   "vc permit": "Everyone", "vc claim": "Everyone · 30s", "vc transfer": "Everyone", "vc limit": "Everyone",
-  "vc config": "Gods+", "voicemaster configuration": "Gods+", mvc: "Everyone",
+  "vc config": "Gods+", "voicemaster configuration": "Gods+", "vc edit": "Owner", mvc: "Everyone",
   "send interface": "Everyone", ghost: "Premium+", unghost: "Premium+", claim: "Everyone · 30s",
   "vc rank": "Everyone", "vc rank assign": "Gods+", "vc unrank": "Gods+", "vc rankinfo": "Everyone",
   "voice plus": "Gods+", "voice premium": "Gods+", "vouch premium plus": "Gods+",
@@ -44,6 +47,7 @@ const WHO = {
   forcerolestrip: "Founder+", unforcerolestrip: "Founder+", rolestrip: "Founder+",
   help: "Everyone", showallcommands: "Everyone", afk: "Everyone", "afk mentions": "Everyone", setprefix: "Founder+",
   snipe: "Everyone", s: "Everyone", clearsnipe: "Everyone", cs: "Everyone",
+  modstats: "Everyone", viewstats: "Everyone",
   "alias add": "Founder+", "alias remove": "Founder+", "alias removeall": "Founder+", "alias reset": "Founder+",
   "alias view": "Founder+", "alias list": "Founder+", restart: "Founder+",
   embedcreate: "Everyone", instagram: "Everyone", tiktok: "Everyone", roblox: "Everyone",
@@ -83,7 +87,17 @@ function categories(prefix) {
       ["fp remove", "take a fake permission"],
       ["fp list", "list fake permissions"],
       ["fp reset", "clear fake permissions"],
-      ["fp template", "save or load a template"]
+      ["fp template", "save or load a template"],
+      ["serversetup", "jail and mute setup"],
+      ["jail", "strip roles and show only jail"],
+      ["unjail", "give the jailed roles back"],
+      ["cmute", "stop someone typing"],
+      ["imute", "stop someone sending images"],
+      ["rmute", "stop someone reacting"],
+      ["mute", "ask server mute or chat mute"],
+      ["servermute", "server mute in voice"],
+      ["camblacklist", "take camera roles"],
+      ["cam set", "choose the camera role"]
     ])],
     ["Info", block(prefix, [
       ["avatar", "show an avatar"],
@@ -93,7 +107,9 @@ function categories(prefix) {
       ["snipe", "deleted messages from the last 2 hours"],
       ["s", "alias of snipe"],
       ["clearsnipe", "clear deleted message history"],
-      ["cs", "alias of clearsnipe"]
+      ["cs", "alias of clearsnipe"],
+      ["modstats", "moderation actions issued"],
+      ["viewstats", "voice time and messages"]
     ])],
     ["Channels", block(prefix, [
       ["lock", "lock a channel"],
@@ -122,6 +138,7 @@ function categories(prefix) {
     ["Voice", block(prefix, [
       ["vc", "open your VC panel"],
       ["vc setup", "VoiceMaster setup"],
+      ["vc edit", "connect auto-unmute or random join"],
       ["vc lock", "lock your VC"],
       ["vc unlock", "unlock your VC"],
       ["vc ghost", "hide your VC"],

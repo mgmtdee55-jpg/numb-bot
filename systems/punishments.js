@@ -2,6 +2,7 @@ const { AuditLogEvent } = require("discord.js");
 const db = require("../db");
 const access = require("./access");
 const { sendLog } = require("./logs");
+const stats = require("../stats");
 
 const AUDIT_WINDOW_MS = 20000;
 const BAN_ACTIONS = new Set(["ban", "hardban", "foreverban", "softban", "tempban"]);
@@ -66,6 +67,9 @@ async function logBan(guild, userId, options = {}) {
   const recent = recentBan(guild.id, userId);
   const saved = recent || enforcedBan(guild.id, userId);
   const entry = await auditEntry(guild, AuditLogEvent.MemberBanAdd, userId);
+  if (!recent) {
+    stats.recordAction(guild.id, entry?.executorId || entry?.executor?.id, userId, "ban", entry?.reason, entry?.createdTimestamp);
+  }
   return postPunishment(guild, banTitle(saved?.action), userId, {
     moderatorId: saved?.moderator_id || entry?.executorId || entry?.executor?.id || null,
     reason: saved?.reason || entry?.reason,
@@ -81,6 +85,7 @@ async function logKick(guild, userId, options = {}) {
     entry = await auditEntry(guild, AuditLogEvent.MemberKick, userId);
   }
   if (!entry) return false;
+  stats.recordAction(guild.id, entry.executorId || entry.executor?.id, userId, "kick", entry.reason, entry.createdTimestamp);
   return postPunishment(guild, "Kick", userId, {
     moderatorId: entry.executorId || entry.executor?.id || null,
     reason: entry.reason,
@@ -91,6 +96,16 @@ async function logKick(guild, userId, options = {}) {
 async function logTimeout(guild, userId, untilTimestamp, cleared, options = {}) {
   if (options.wait !== 0) await sleep(options.wait ?? 1200);
   const entry = await auditEntry(guild, AuditLogEvent.MemberUpdate, userId, "communication_disabled_until");
+  if (!cleared) {
+    stats.recordAction(
+      guild.id,
+      entry?.executorId || entry?.executor?.id,
+      userId,
+      "mute",
+      entry?.reason || "Timeout",
+      entry?.createdTimestamp
+    );
+  }
   const until = Number(untilTimestamp) > Date.now()
     ? `**Until:** <t:${Math.floor(untilTimestamp / 1000)}:F> (<t:${Math.floor(untilTimestamp / 1000)}:R>)`
     : null;

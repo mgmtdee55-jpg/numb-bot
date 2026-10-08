@@ -27,6 +27,7 @@ const systems = require("./systems");
 const afk = require("./afk");
 const extras = require("./extras");
 const snipe = require("./snipe");
+const stats = require("./stats");
 const personalBan = require("./personal-ban");
 const { card, loadEmojis, emojisLoaded } = require("./feedback");
 let cleanupRunning = false;
@@ -56,6 +57,7 @@ client.once("clientReady", async () => {
     extras.resumeGiveaways(client);
     extras.syncVanity(client).catch((error) => console.error("[vanity]", error));
     await vouch.reconcileAll(client);
+    stats.reconcile(client);
     for (const guild of client.guilds.cache.values()) {
       try {
         await reconcileGuild(guild);
@@ -97,6 +99,7 @@ async function runCommand(message, prefix, options) {
 client.on("messageCreate", async (message) => {
   if (!message.guild || message.author?.bot) return;
   snipe.remember(message);
+  stats.noteMessage(message);
   await emojisLoaded();
   const prefix = vouch.getPrefix(message.guild.id);
   try {

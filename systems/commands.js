@@ -574,6 +574,7 @@ async function restart(message) {
 async function handleCommand(message, args, prefix) {
   const name = commandName(args, prefix);
   if (await extras.handleCommand(message, args, prefix)) return true;
+  if (await require("../punish").handleCommand(message, name, args)) return true;
   if (name === "afk") {
     if ((args[1] || "").toLowerCase() === "mentions") {
       await afk.listMentions(message);

@@ -7,6 +7,7 @@ const vanity = require("./vanity");
 const catalog = require("./vouch/catalog");
 const vouch = require("./vouch");
 const snipe = require("./snipe");
+const stats = require("./stats");
 
 function commandName(args, prefix) {
   const head = String(args[0] || "").toLowerCase();
@@ -73,6 +74,10 @@ async function handleCommand(message, args, prefix) {
     await snipe.handleCommand(message, name);
     return true;
   }
+  if (name === "modstats" || name === "viewstats") {
+    await stats.handleCommand(message, name, args);
+    return true;
+  }
   return false;
 }
 
@@ -95,6 +100,10 @@ async function handleInteraction(interaction) {
   if (id === "spanter:vcconfig:setup") return vcConfig.handleButton(interaction);
   if (id.startsWith("spanter:vanity:")) return vanity.handleInteraction(interaction);
   if (id.startsWith("spanter:snipe:")) return snipe.handleButton(interaction);
+  if (id.startsWith("spanter:modstats:")) return stats.handleButton(interaction);
+  if (id.startsWith("spanter:serversetup:")) return require("./punish").handleSetup(interaction);
+  if (id.startsWith("spanter:mute:")) return require("./punish").handleMuteButton(interaction);
+  if (id.startsWith("spanter:vcedit:")) return require("./vc-features").handleButton(interaction);
   if (id.startsWith("spanter:confirm:nuke:")) return require("./systems/channels").handleInteraction(interaction);
   if (id.startsWith("spanter:confirm:vcreset:")) return require("./commands").handleVcReset(interaction);
   return false;

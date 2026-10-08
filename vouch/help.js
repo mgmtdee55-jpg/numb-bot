@@ -79,7 +79,15 @@ function moderationText(prefix) {
     `\`${p}fub @user\` / \`${p}foreverunban\``,
     `\`${p}role add @user @role\``,
     `\`${p}fp add @role <permission>\``,
-    `\`${p}fakepermissions\``
+    `\`${p}fakepermissions\``,
+    `\`${p}serversetup\` — create or select jail, mute, and camera roles`,
+    `\`${p}jail @user [reason]\` / \`${p}unjail @user\``,
+    `\`${p}cmute @user\` / \`${p}chatmute\` — toggle chat mute`,
+    `\`${p}imute @user\` / \`${p}imagemute\` — toggle image mute`,
+    `\`${p}rmute @user\` / \`${p}reactionmute\` — toggle reaction mute`,
+    `\`${p}mute @user\` — ask server mute or chat mute`,
+    `\`${p}servermute @user\``,
+    `\`${p}cam set @role\` / \`${p}camblacklist set @role\` / \`${p}camblacklist @user\``
   ].join("\n");
 }
 
@@ -88,6 +96,7 @@ function voiceText(prefix) {
   return [
     `\`${p}vc\` — channel controls while in a temporary VC`,
     `\`${p}vc setup\` — owner setup wizard`,
+    `\`${p}vc edit\` — connect an auto-unmute call or a random-join call`,
     `\`${p}vc lock|unlock|ghost|unghost\``,
     `\`${p}vc kick @user\` — remove someone from your VC`,
     `\`${p}vc ban|reject @user\` — block joining, the channel stays visible`,
@@ -109,6 +118,8 @@ function botText(prefix) {
     `\`${p}showallcommands\` — every command, grouped`,
     `\`${p}snipe\` / \`${p}s\` — deleted messages in this channel from the last 2 hours`,
     `\`${p}clearsnipe\` / \`${p}cs\` — clear that snipe history`,
+    `\`${p}modstats [@user]\` — warns, kicks, bans, and mutes they issued`,
+    `\`${p}viewstats [@user]\` — voice time and messages`,
     `\`${p}setprefix <prefix>\` — persists after restart`,
     `\`${p}embedcreate\` — build an embed`,
     `\`${p}alias add <shortcut> <command>\``,

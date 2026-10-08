@@ -561,7 +561,7 @@ test("showallcommands pages one category at a time", async () => {
     "VC Ranks", "Vouch", "Staff", "Godmode", "Force", "Social", "Vanity", "Giveaways", "Bot"
   ]);
   const text = pages.map((page) => page.description).join("\n");
-  for (const command of ["-ban", "-pban", "-antinuke vouch limit view", "-role limit set", "-nuke", "-ceo add", "-showallcommands", "-instagram", "-giveaways start", "-embedcreate", "-modlogreset", "-voiceshield", "-snipe", "-clearsnipe"]) {
+  for (const command of ["-ban", "-pban", "-antinuke vouch limit view", "-role limit set", "-nuke", "-ceo add", "-showallcommands", "-instagram", "-giveaways start", "-embedcreate", "-modlogreset", "-voiceshield", "-snipe", "-clearsnipe", "-modstats", "-viewstats", "-jail", "-vc edit"]) {
     assert.ok(text.includes(`\`${command}\``), command);
   }
   assert.doesNotMatch(text, /vouch check|vouch wipeall|limitedroles|setvouchlogs/);

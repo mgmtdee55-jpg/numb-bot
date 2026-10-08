@@ -1,6 +1,7 @@
 const logs = require("./logs");
 const voice = require("./voice");
 const punishments = require("./punishments");
+const stats = require("../stats");
 
 function stamp() {
   return logs.whenLine(Date.now());
@@ -8,7 +9,12 @@ function stamp() {
 
 function bindClient(client) {
   client.on("voiceStateUpdate", (before, after) => {
+    stats.trackVoice(before, after);
+    require("../vc-features").observe(before, after).catch((error) => console.error("[vc feature]", error));
     voice.enforceVoice(before, after).catch((error) => console.error("[voice guard]", error));
+  });
+  client.on("channelCreate", (channel) => {
+    require("../punish").applyChannel(channel).catch((error) => console.error("[punishment channel]", error));
   });
 
   client.on("messageDelete", (message) => {
@@ -64,6 +70,7 @@ function bindClient(client) {
     punishments.logKick(member.guild, member.id).catch((error) => console.error("[punishment log]", error));
   });
   client.on("guildMemberUpdate", (before, after) => {
+    require("../punish").syncMember(before, after).catch((error) => console.error("[punishment sync]", error));
     if (before.nickname !== after.nickname) {
       logs.sendLog(after.guild, "member", [
         `**User:** <@${after.id}>`,
