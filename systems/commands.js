@@ -517,6 +517,38 @@ async function handleGrant(message, args, prefix, removing) {
   );
 }
 
+async function handleVoiceShield(message, args, prefix) {
+  if (!access.canGrantCommands(message.member)) {
+    return deny(message, "Only Gods and the server owner can grant voice shield.");
+  }
+  const sub = String(args[1] || "").trim().toLowerCase();
+  if (sub === "list") {
+    const rows = store.listVoiceShields(message.guild.id);
+    if (!rows.length) return reply(message, "Voice Shield", "Nobody has been granted voice shield.");
+    return reply(message, "Voice Shield", rows.map((row) => `<@${row.user_id}>`).join("\n"));
+  }
+  const removing = sub === "remove" || sub === "off";
+  const member = await resolveMember(message, removing ? args[2] : args[1]);
+  if (!member) {
+    return reply(message, "Voice Shield", `\`${prefix}voiceshield @user\`\n\`${prefix}voiceshield remove @user\``);
+  }
+  if (member.user?.bot) return reply(message, "Invalid Target", "Bots cannot hold voice shield.");
+  if (removing) {
+    const removed = store.removeVoiceShield(message.guild.id, member.id);
+    if (!removed) return reply(message, "No Voice Shield", `<@${member.id}> does not have a voice shield grant.`);
+    const still = access.voiceShieldReply(member);
+    return reply(
+      message,
+      "Voice Shield Removed",
+      still
+        ? `<@${member.id}> lost the grant. They still cannot be removed because of their rank.`
+        : `<@${member.id}> can be kicked, banned, or rejected from a voice channel again.`
+    );
+  }
+  store.addVoiceShield(message.guild.id, member.id, message.author.id);
+  return reply(message, "Voice Shield", `<@${member.id}> cannot be kicked, banned, or rejected from a voice channel.`);
+}
+
 async function resetModLogs(message) {
   if (!access.canSetup(message.member)) {
     return deny(message, "Gods and the server owner can reset logs.");
@@ -564,6 +596,10 @@ async function handleCommand(message, args, prefix) {
   }
   if (name === "modlogreset") {
     await resetModLogs(message);
+    return true;
+  }
+  if (name === "voiceshield") {
+    await handleVoiceShield(message, args, prefix);
     return true;
   }
   if (name === "voice") {

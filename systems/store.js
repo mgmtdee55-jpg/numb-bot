@@ -112,6 +112,14 @@ CREATE TABLE IF NOT EXISTS command_grants (
   created_at INTEGER NOT NULL,
   PRIMARY KEY (guild_id, user_id, command)
 );
+
+CREATE TABLE IF NOT EXISTS voice_shields (
+  guild_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  added_by TEXT,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (guild_id, user_id)
+);
 `);
 
 function key(value) {
@@ -200,6 +208,13 @@ const statements = {
   revokeCommand: connection.prepare("DELETE FROM command_grants WHERE guild_id=? AND user_id=? AND command=?"),
   hasCommandGrant: connection.prepare("SELECT 1 FROM command_grants WHERE guild_id=? AND user_id=? AND command=?"),
   listCommandGrants: connection.prepare("SELECT * FROM command_grants WHERE guild_id=? ORDER BY user_id, command"),
+  addVoiceShield: connection.prepare(`
+    INSERT INTO voice_shields(guild_id, user_id, added_by, created_at) VALUES(?,?,?,?)
+    ON CONFLICT(guild_id, user_id) DO UPDATE SET added_by=excluded.added_by, created_at=excluded.created_at
+  `),
+  removeVoiceShield: connection.prepare("DELETE FROM voice_shields WHERE guild_id=? AND user_id=?"),
+  hasVoiceShieldRow: connection.prepare("SELECT 1 FROM voice_shields WHERE guild_id=? AND user_id=?"),
+  listVoiceShields: connection.prepare("SELECT * FROM voice_shields WHERE guild_id=? ORDER BY created_at ASC"),
   listCommandGrantsForUser: connection.prepare("SELECT * FROM command_grants WHERE guild_id=? AND user_id=? ORDER BY command")
 };
 
@@ -388,6 +403,18 @@ module.exports = {
   },
   hasCommandGrant(guildId, userId, command) {
     return !!statements.hasCommandGrant.get(key(guildId), key(userId), command);
+  },
+  addVoiceShield(guildId, userId, addedBy) {
+    statements.addVoiceShield.run(key(guildId), key(userId), addedBy == null ? null : key(addedBy), Date.now());
+  },
+  removeVoiceShield(guildId, userId) {
+    return statements.removeVoiceShield.run(key(guildId), key(userId)).changes > 0;
+  },
+  hasVoiceShieldRow(guildId, userId) {
+    return !!statements.hasVoiceShieldRow.get(key(guildId), key(userId));
+  },
+  listVoiceShields(guildId) {
+    return statements.listVoiceShields.all(key(guildId));
   },
   listCommandGrants(guildId) {
     return statements.listCommandGrants.all(key(guildId));

@@ -1951,6 +1951,64 @@ test("setup expiration edits the private wizard and does not create a configurat
   assert.equal(db.getConfig(guild.id), undefined);
 });
 
+test("voice shield blocks kicks, bans, and rejects", async () => {
+  clearActionCooldowns();
+  const store = require("../systems/store");
+  const access = require("../systems/access");
+  const guild = makeGuild("voice-shield-guild");
+  const vcOwner = makeMember(guild, "121212121212121212");
+  const plus = makeMember(guild, "131313131313131313");
+  const premiumPlus = makeMember(guild, "141414141414141414");
+  const granted = makeMember(guild, "151515151515151515");
+  const ceo = makeMember(guild, "161616161616161616");
+  const guildOwner = makeMember(guild, guild.ownerId);
+  const channel = makeVoiceChannel(guild, "voice-shield-channel", [vcOwner, plus, premiumPlus, granted, ceo, guildOwner]);
+  db.addTemp({
+    channel_id: channel.id,
+    guild_id: guild.id,
+    owner_id: vcOwner.id,
+    interface_message_id: null,
+    created_at: Date.now()
+  });
+  store.setRank(guild.id, plus.id, "plus", vcOwner.id);
+  store.setRank(guild.id, premiumPlus.id, "premiumplus", vcOwner.id);
+  store.addVoiceShield(guild.id, granted.id, vcOwner.id);
+  store.setStaff(guild.id, ceo.id, "god", guild.ownerId);
+
+  const open = makeMessage(guild, `-vc kick ${plus.id}`, vcOwner, vcOwner);
+  await handleCommand(open, null, "-");
+  assert.equal(plus.voice.channelId, null);
+
+  for (const [member, phrase] of [
+    [premiumPlus, /paid protection/],
+    [granted, /paid protection/],
+    [ceo, /cant kick the owner/],
+    [guildOwner, /cant kick the owner/]
+  ]) {
+    for (const sub of ["kick", "ban", "reject"]) {
+      clearActionCooldowns();
+      const message = makeMessage(guild, `-vc ${sub} ${member.id}`, vcOwner, vcOwner);
+      await handleCommand(message, null, "-");
+      assert.match(message.replies[0].embeds[0].data.description, phrase);
+      assert.equal(member.voice.channelId, channel.id);
+      assert.equal(db.isBanned(channel.id, member.id), false);
+    }
+  }
+
+  const banSelect = makeInteraction(guild, "vc_select_ban", {
+    type: "user",
+    values: [premiumPlus.id],
+    userId: vcOwner.id
+  });
+  await controls.handleSelect(banSelect);
+  assert.match(banSelect.updates[0].embeds[0].data.description, /paid protection/);
+  assert.equal(db.isBanned(channel.id, premiumPlus.id), false);
+  assert.ok(access.commandsForRank("premiumplus").includes("inspect"));
+  assert.ok(access.commandsForRank("premiumplus").includes("follow"));
+  assert.ok(access.commandsForRank("premiumplus").includes("voiceoverride"));
+  assert.equal(access.commandsForRank("plus").includes("follow"), false);
+});
+
 test("saved configuration and ownership survive reopening SQLite", () => {
   db.setConfig({
     guild_id: "persistent-guild",

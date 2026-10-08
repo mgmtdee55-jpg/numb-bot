@@ -1,4 +1,4 @@
-const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require("discord.js");
+const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, StringSelectMenuBuilder } = require("discord.js");
 const { ACCENT } = require("./constants");
 const access = require("../systems/access");
 
@@ -14,7 +14,8 @@ const WHO = {
   modlogreset: "Gods+",
   "role limit set": "Gods+", "role limit remove": "Gods+", "role limit view": "Gods+",
   vc: "Everyone", "vc setup": "Owner", "vc lock": "Everyone", "vc unlock": "Everyone",
-  "vc ghost": "Premium+", "vc unghost": "Premium+", "vc kick": "Everyone", "vc ban": "Everyone",
+  "vc ghost": "Premium+", "vc unghost": "Premium+", "vc kick": "Everyone", "vc reject": "Everyone", "vc ban": "Everyone",
+  voiceshield: "Gods+",
   "vc permit": "Everyone", "vc claim": "Everyone · 30s", "vc transfer": "Everyone", "vc limit": "Everyone",
   "vc config": "Gods+", "voicemaster configuration": "Gods+", mvc: "Everyone",
   "send interface": "Everyone", ghost: "Premium+", unghost: "Premium+", claim: "Everyone · 30s",
@@ -121,6 +122,7 @@ function categories(prefix) {
       ["vc ghost", "hide your VC"],
       ["vc unghost", "show your VC"],
       ["vc kick", "kick from your VC"],
+      ["vc reject", "kick from your VC"],
       ["vc ban", "ban from your VC"],
       ["vc permit", "allow into your VC"],
       ["vc claim", "claim an empty VC"],
@@ -144,6 +146,7 @@ function categories(prefix) {
       ["vouch premium plus", "set the premium plus role"],
       ["forceownership", "take VC ownership"],
       ["voiceoverride", "bypass a VC lock"],
+      ["voiceshield", "block VC kick, ban, and reject"],
       ["dragall", "pull one VC into yours"],
       ["voicehistory", "recent voice moves"],
       ["godmode", "protect from server mute"],
@@ -304,11 +307,28 @@ function pageMessage(prefix = "-", index = 0, member = null) {
     .setTitle(page.title)
     .setDescription(page.description.slice(0, 4096))
     .setFooter({ text: [`Page ${safe + 1} / ${pages.length}`, rank].filter(Boolean).join(" · ") });
+  const seen = new Set();
+  const options = [];
+  pages.forEach((item, index) => {
+    if (seen.has(item.name) || options.length >= 25) return;
+    seen.add(item.name);
+    options.push({
+      label: item.name.slice(0, 100),
+      value: String(index),
+      default: item.name === page.name
+    });
+  });
+  const menu = new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId("spanter:commands:cat")
+      .setPlaceholder("Jump to a category")
+      .addOptions(options)
+  );
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`spanter:commands:${safe - 1}`).setLabel("Back").setStyle(ButtonStyle.Secondary).setDisabled(safe <= 0),
     new ButtonBuilder().setCustomId(`spanter:commands:${safe + 1}`).setLabel("Next").setStyle(ButtonStyle.Secondary).setDisabled(safe >= pages.length - 1)
   );
-  return { embeds: [embed], components: [row] };
+  return { embeds: [embed], components: [menu, row] };
 }
 
 module.exports = { categories, commandPages, pageMessage, splitField };

@@ -195,8 +195,26 @@ function rankByKey(key) {
 }
 
 function commandsForRank(key) {
-  const rank = rankByKey(key);
-  return rank ? [...rank.commands] : [];
+  const index = LADDER.findIndex((rank) => rank.key === key);
+  if (index < 0) return [];
+  const names = [];
+  for (let i = 0; i <= index; i += 1) names.push(...LADDER[i].commands);
+  return [...new Set(names)];
+}
+
+function hasVoiceShield(member) {
+  if (!member?.guild) return false;
+  if (isServerOwner(member) || isBotOwner(member.id) || hasStaff(member, "god")) return true;
+  if (voiceRankKey(member) === "premiumplus") return true;
+  return store.hasVoiceShieldRow(member.guild.id, member.id);
+}
+
+function voiceShieldReply(member) {
+  if (!hasVoiceShield(member)) return null;
+  if (isServerOwner(member) || isBotOwner(member.id) || hasStaff(member, "god")) {
+    return "yo dawg u cant kick the owner from a vc mud";
+  }
+  return "yo they got paid protection mud, i cant remove them from the voice call";
 }
 
 function voiceRankKey(member) {
@@ -315,7 +333,7 @@ function ladderText() {
   return [
     "**Gods and the server owner** — muteall, unmuteall. Founders do not get these.",
     "**Gods and Founders** can use the other voice commands without a VC rank.",
-    "**Voice Premium Plus** — voiceoverride, stsu, unstsu, plus Voice Premium",
+    "**Voice Premium Plus** — voiceoverride, stsu, unstsu, voice shield, plus everything in Voice Premium and Voice Plus",
     "**Voice Premium** — follow, chain, unfollow, bring, forceclaim, inspect",
     "**Voice Plus** — inspect",
     "",
@@ -354,6 +372,8 @@ module.exports = {
   parseRank,
   rankByKey,
   commandsForRank,
+  hasVoiceShield,
+  voiceShieldReply,
   voiceRankKey,
   voiceRankLabel,
   rankLine,

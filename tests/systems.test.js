@@ -486,7 +486,11 @@ test("showallcommands pages one category at a time", async () => {
   assert.match(first.title, /^Moderation/);
   assert.ok(first.description.split("\n").length <= 12);
   assert.match(first.description, /`-ban`/);
-  const buttons = shown.replies[0].components[0].components;
+  const menu = shown.replies[0].components[0].toJSON().components[0];
+  assert.equal(menu.custom_id, "spanter:commands:cat");
+  assert.equal(menu.options[0].label, "Moderation");
+  assert.equal(menu.options[0].default, true);
+  const buttons = shown.replies[0].components[1].components;
   assert.equal(buttons[0].data.label, "Back");
   assert.equal(buttons[0].data.disabled, true);
   assert.equal(buttons[1].data.label, "Next");
@@ -498,7 +502,7 @@ test("showallcommands pages one category at a time", async () => {
     "VC Ranks", "Vouch", "Staff", "Godmode", "Force", "Social", "Vanity", "Giveaways", "Bot"
   ]);
   const text = pages.map((page) => page.description).join("\n");
-  for (const command of ["-ban", "-pban", "-antinuke vouch limit view", "-role limit set", "-nuke", "-ceo add", "-showallcommands", "-instagram", "-giveaways start", "-embedcreate", "-modlogreset"]) {
+  for (const command of ["-ban", "-pban", "-antinuke vouch limit view", "-role limit set", "-nuke", "-ceo add", "-showallcommands", "-instagram", "-giveaways start", "-embedcreate", "-modlogreset", "-voiceshield"]) {
     assert.ok(text.includes(`\`${command}\``), command);
   }
   assert.doesNotMatch(text, /vouch check|vouch wipeall|limitedroles|setvouchlogs/);

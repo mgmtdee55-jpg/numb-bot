@@ -172,7 +172,7 @@ async function handleCommand(message, client, prefix = "-", options = {}) {
       }
       return controls.transferOwnership(message, target);
     }
-    if (["kick", "ban", "unban", "permit"].includes(sub)) {
+    if (["kick", "ban", "unban", "permit", "reject"].includes(sub)) {
       const target = await resolveMember(message, args[2]);
       if (!target) {
         return message.reply({
@@ -189,7 +189,7 @@ async function handleCommand(message, client, prefix = "-", options = {}) {
             [
               "`-vc setup` · Open the setup wizard",
               "`-vc lock|unlock|ghost|unghost` · Manage your channel",
-              "`-vc kick|ban|unban|permit @user|user-id` · Manage a member",
+              "`-vc kick|reject|ban|unban|permit @user|user-id` · Manage a member",
               "`-vc claim` · Claim an unowned channel",
               "`-vc transfer @user` · Give your channel to someone in it",
               "`-vc limit <0-99>` · Set your channel limit",

@@ -73,6 +73,12 @@ async function handleCommand(message, args, prefix) {
 
 async function handleInteraction(interaction) {
   const id = interaction.customId || "";
+  if (id === "spanter:commands:cat") {
+    const index = Number(interaction.values?.[0] || 0);
+    const prefix = vouch.getPrefix(interaction.guild.id);
+    await interaction.update(catalog.pageMessage(prefix, index, interaction.member));
+    return true;
+  }
   if (id.startsWith("spanter:commands:")) {
     const index = Number(id.slice("spanter:commands:".length));
     const prefix = vouch.getPrefix(interaction.guild.id);

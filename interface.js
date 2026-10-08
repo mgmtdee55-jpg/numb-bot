@@ -254,12 +254,16 @@ async function handleSelect(interaction) {
   }
 
   const action = interaction.customId.slice("vc_select_".length);
+  if (action === "kick" && target.voice.channelId !== owned.channel.id) {
+    return interaction.editReply(result("Not In Channel", "That member is not in your voice channel."));
+  }
+  if (action === "kick" || action === "ban") {
+    const blocked = shieldBlock(target);
+    if (blocked) return interaction.editReply(blocked);
+  }
   const cooldownReply = await actionCooldownReply(interaction, owned.channel, action);
   if (cooldownReply) return cooldownReply;
   if (action === "kick") {
-    if (target.voice.channelId !== owned.channel.id) {
-      return interaction.editReply(result("Not In Channel", "That member is not in your voice channel."));
-    }
     const ok = await withOwnedChannel(owned.channel, interaction.user.id, () =>
       target.voice.channelId === owned.channel.id
         ? target.voice.disconnect("VoiceMaster kick")
@@ -463,19 +467,28 @@ async function transferOwnership(message, target) {
   return message.reply(result("Ownership Transferred", `<#${channel.id}> now belongs to <@${target.id}>.`));
 }
 
+function shieldBlock(target) {
+  const text = access.voiceShieldReply(target);
+  return text ? result("Voice Shield", text) : null;
+}
+
 async function runTargetTextAction(message, action, target) {
   const channel = message.member?.voice?.channel;
   const row = channel ? db.getTempChannel(channel.id) : null;
   if (!channel || !row || row.owner_id !== message.author.id) {
     return message.reply(result("Owner Only", "Only the current owner can control this temporary voice channel."));
   }
-  const cooldownReply = await actionCooldownReply(message, channel, action);
-  if (cooldownReply) return cooldownReply;
-  if (action === "kick" && target.voice.channelId !== channel.id) {
+  if ((action === "kick" || action === "reject") && target.voice.channelId !== channel.id) {
     return message.reply(result("Not In Channel", "That member is not in your voice channel."));
   }
+  if (action === "kick" || action === "reject" || action === "ban") {
+    const blocked = shieldBlock(target);
+    if (blocked) return message.reply(blocked);
+  }
+  const cooldownReply = await actionCooldownReply(message, channel, action);
+  if (cooldownReply) return cooldownReply;
   const ok = await withOwnedChannel(channel, message.author.id, async () => {
-    if (action === "kick") {
+    if (action === "kick" || action === "reject") {
       if (target.voice.channelId !== channel.id) return false;
       await target.voice.disconnect("VoiceMaster kick");
     } else if (action === "ban") {
