@@ -90,9 +90,9 @@ function panelEmbed(ownerId, guildIconUrl = null, emojiStrings = {}) {
     ghost: "`vc ghost` — Hide your voice channel",
     unghost: "`vc unghost` — Show your voice channel",
     kick: "`vc kick` @user — Kick a user",
-    ban: "`vc ban` @user — Prevent a user from joining",
+    ban: "`vc ban` @user — Block joining, the channel stays visible",
     unban: "`vc unban` @user — Allow a banned user to join",
-    permit: "`vc permit` @user — Permit a user to join",
+    permit: "`vc permit` @user — Join even if the channel is locked or full",
     claim: "`vc claim` — Take ownership of an empty channel",
     limit: "`vc limit` `<number>` — Set user limit",
     transfer: "`vc transfer` @user — Give ownership to someone in the channel"

@@ -452,9 +452,9 @@ test("temp VCs use configured fields and contain exactly the ten requested butto
           ghost: "`vc ghost` — Hide your voice channel",
           unghost: "`vc unghost` — Show your voice channel",
           kick: "`vc kick` @user — Kick a user",
-          ban: "`vc ban` @user — Prevent a user from joining",
+          ban: "`vc ban` @user — Block joining, the channel stays visible",
           unban: "`vc unban` @user — Allow a banned user to join",
-          permit: "`vc permit` @user — Permit a user to join",
+          permit: "`vc permit` @user — Join even if the channel is locked or full",
           claim: "`vc claim` — Take ownership of an empty channel",
           limit: "`vc limit` `<number>` — Set user limit"
         }[action];
@@ -742,6 +742,10 @@ test("every interface button enforces ownership and performs its action", async 
   const ban = makeInteraction(guild, "vc_select_ban", { type: "user", values: [target.id] });
   await controls.handleSelect(ban);
   assert.equal(db.isBanned(channel.id, target.id), true);
+  const banEdit = channel.permissionOverwrites.edits.at(-1);
+  assert.equal(banEdit.target, target.id);
+  assert.equal(banEdit.permissions.Connect, false);
+  assert.notEqual(banEdit.permissions.ViewChannel, false);
 
   const unban = makeInteraction(guild, "vc_select_unban", { type: "user", values: [target.id] });
   await controls.handleSelect(unban);
@@ -751,7 +755,10 @@ test("every interface button enforces ownership and performs its action", async 
   const permit = makeInteraction(guild, "vc_select_permit", { type: "user", values: [target.id] });
   await controls.handleSelect(permit);
   assert.equal(db.isPermitted(channel.id, target.id), true);
-  assert.equal(channel.permissionOverwrites.edits.at(-1).permissions.Connect, true);
+  const permitEdit = channel.permissionOverwrites.edits.at(-1);
+  assert.equal(permitEdit.permissions.Connect, true);
+  assert.equal(permitEdit.permissions.MoveMembers, true);
+  assert.notEqual(permitEdit.permissions.ViewChannel, false);
 
   const limitButton = makeInteraction(guild, "vc_limit");
   await controls.handleButton(limitButton);
@@ -1949,6 +1956,43 @@ test("setup expiration edits the private wizard and does not create a configurat
     message: reopen.responseMessage
   }));
   assert.equal(db.getConfig(guild.id), undefined);
+});
+
+test("vc ban and vc reject block joining without hiding the channel", async () => {
+  clearActionCooldowns();
+  const guild = makeGuild("vc-reject-guild");
+  const owner = makeMember(guild, "232323232323232323");
+  const target = makeMember(guild, "242424242424242424");
+  const channel = makeVoiceChannel(guild, "vc-reject-channel", [owner, target]);
+  db.addTemp({
+    channel_id: channel.id,
+    guild_id: guild.id,
+    owner_id: owner.id,
+    interface_message_id: null,
+    created_at: Date.now()
+  });
+  db.addPermit(channel.id, target.id);
+
+  const rejected = makeMessage(guild, `-vc reject ${target.id}`, owner, owner);
+  await handleCommand(rejected, null, "-");
+  assert.match(rejected.replies[0].embeds[0].data.description, /cannot join it/);
+  assert.equal(target.voice.channelId, null);
+  assert.equal(db.isBanned(channel.id, target.id), true);
+  assert.equal(db.isPermitted(channel.id, target.id), false);
+  const rejectEdit = channel.permissionOverwrites.edits.at(-1);
+  assert.equal(rejectEdit.permissions.Connect, false);
+  assert.notEqual(rejectEdit.permissions.ViewChannel, false);
+
+  clearActionCooldowns();
+  const permitted = makeMessage(guild, `-vc permit ${target.id}`, owner, owner);
+  await handleCommand(permitted, null, "-");
+  assert.match(permitted.replies[0].embeds[0].data.description, /locked or full/);
+  assert.equal(db.isBanned(channel.id, target.id), false);
+  assert.equal(db.isPermitted(channel.id, target.id), true);
+  const permitEdit = channel.permissionOverwrites.edits.at(-1);
+  assert.equal(permitEdit.permissions.Connect, true);
+  assert.equal(permitEdit.permissions.MoveMembers, true);
+  assert.notEqual(permitEdit.permissions.ViewChannel, false);
 });
 
 test("voice shield blocks kicks, bans, and rejects", async () => {

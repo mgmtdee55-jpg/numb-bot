@@ -220,9 +220,9 @@ async function handleButton(interaction) {
   if (["kick", "ban", "unban", "permit"].includes(action)) {
     const descriptions = {
       kick: "Select a member in your voice channel to kick.",
-      ban: "Select a member to prevent them from joining this voice channel.",
+      ban: "Select a member to block from joining. The channel stays visible.",
       unban: "Select a member to allow them to join again.",
-      permit: "Select a member to permit to join this voice channel."
+      permit: "Select a member who can join even if this channel is locked or full."
     };
     return interaction.editReply({
       ...privateResult(`${action[0].toUpperCase()}${action.slice(1)} User`, descriptions[action]),
@@ -273,46 +273,19 @@ async function handleSelect(interaction) {
     return interaction.editReply(result("Kicked", `<@${target.id}> was removed from your voice channel.`));
   }
   if (action === "ban") {
-    const ok = await withOwnedChannel(owned.channel, interaction.user.id, async () => {
-      await owned.channel.permissionOverwrites.edit(target.id, {
-        ViewChannel: true,
-        Connect: false
-      });
-      db.removePermit(owned.channel.id, target.id);
-      db.addBan(owned.channel.id, target.id);
-      if (target.voice.channelId === owned.channel.id) {
-        await target.voice.disconnect("VoiceMaster ban");
-      }
-    });
+    const ok = await withOwnedChannel(owned.channel, interaction.user.id, () => revokeJoin(owned.channel, target));
     if (!ok) return interaction.editReply(privateResult("Owner Only", "Only the current channel owner can use this control."));
-    return interaction.editReply(result("Banned", `<@${target.id}> cannot join this voice channel.`));
+    return interaction.editReply(result("Banned", `<@${target.id}> can still see this channel, but they cannot join it.`));
   }
   if (action === "unban") {
-    const ok = await withOwnedChannel(owned.channel, interaction.user.id, async () => {
-      if (db.isPermitted(owned.channel.id, target.id)) {
-        await owned.channel.permissionOverwrites.edit(target.id, {
-          ViewChannel: true,
-          Connect: true
-        });
-      } else {
-        await owned.channel.permissionOverwrites.delete(target.id);
-      }
-      db.removeBan(owned.channel.id, target.id);
-    });
+    const ok = await withOwnedChannel(owned.channel, interaction.user.id, () => clearBan(owned.channel, target));
     if (!ok) return interaction.editReply(privateResult("Owner Only", "Only the current channel owner can use this control."));
     return interaction.editReply(result("Unbanned", `<@${target.id}> is allowed to join again.`));
   }
   if (action === "permit") {
-    const ok = await withOwnedChannel(owned.channel, interaction.user.id, async () => {
-      await owned.channel.permissionOverwrites.edit(target.id, {
-        ViewChannel: true,
-        Connect: true
-      });
-      db.removeBan(owned.channel.id, target.id);
-      db.addPermit(owned.channel.id, target.id);
-    });
+    const ok = await withOwnedChannel(owned.channel, interaction.user.id, () => allowJoin(owned.channel, target));
     if (!ok) return interaction.editReply(privateResult("Owner Only", "Only the current channel owner can use this control."));
-    return interaction.editReply(result("Permitted", `<@${target.id}> may join this voice channel.`));
+    return interaction.editReply(result("Permitted", `<@${target.id}> can join this channel even if it is locked or full.`));
   }
   return interaction.editReply(result("Unavailable", "That user action is not available."));
 }
@@ -472,53 +445,75 @@ function shieldBlock(target) {
   return text ? result("Voice Shield", text) : null;
 }
 
+async function revokeJoin(channel, target) {
+  await channel.permissionOverwrites.edit(target.id, {
+    Connect: false,
+    MoveMembers: null,
+    ViewChannel: null
+  });
+  db.removePermit(channel.id, target.id);
+  db.addBan(channel.id, target.id);
+  if (target.voice?.channelId === channel.id) await target.voice.disconnect("VoiceMaster ban");
+}
+
+async function allowJoin(channel, target) {
+  await channel.permissionOverwrites.edit(target.id, {
+    Connect: true,
+    MoveMembers: true,
+    ViewChannel: null
+  });
+  db.removeBan(channel.id, target.id);
+  db.addPermit(channel.id, target.id);
+}
+
+async function clearBan(channel, target) {
+  const permitted = db.isPermitted(channel.id, target.id);
+  db.removeBan(channel.id, target.id);
+  if (permitted) {
+    await channel.permissionOverwrites.edit(target.id, {
+      Connect: true,
+      MoveMembers: true,
+      ViewChannel: null
+    });
+    return;
+  }
+  await channel.permissionOverwrites.delete(target.id);
+}
+
 async function runTargetTextAction(message, action, target) {
   const channel = message.member?.voice?.channel;
   const row = channel ? db.getTempChannel(channel.id) : null;
   if (!channel || !row || row.owner_id !== message.author.id) {
     return message.reply(result("Owner Only", "Only the current owner can control this temporary voice channel."));
   }
-  if ((action === "kick" || action === "reject") && target.voice.channelId !== channel.id) {
+  if (action === "kick" && target.voice.channelId !== channel.id) {
     return message.reply(result("Not In Channel", "That member is not in your voice channel."));
   }
   if (action === "kick" || action === "reject" || action === "ban") {
     const blocked = shieldBlock(target);
     if (blocked) return message.reply(blocked);
   }
-  const cooldownReply = await actionCooldownReply(message, channel, action);
+  const cooldownReply = await actionCooldownReply(message, channel, action === "reject" ? "ban" : action);
   if (cooldownReply) return cooldownReply;
   const ok = await withOwnedChannel(channel, message.author.id, async () => {
-    if (action === "kick" || action === "reject") {
+    if (action === "kick") {
       if (target.voice.channelId !== channel.id) return false;
       await target.voice.disconnect("VoiceMaster kick");
-    } else if (action === "ban") {
-      await channel.permissionOverwrites.edit(target.id, {
-        ViewChannel: true,
-        Connect: false
-      });
-      db.removePermit(channel.id, target.id);
-      db.addBan(channel.id, target.id);
-      if (target.voice.channelId === channel.id) await target.voice.disconnect("VoiceMaster ban");
+    } else if (action === "ban" || action === "reject") {
+      await revokeJoin(channel, target);
     } else if (action === "unban") {
-      if (db.isPermitted(channel.id, target.id)) {
-        await channel.permissionOverwrites.edit(target.id, {
-          ViewChannel: true,
-          Connect: true
-        });
-      } else {
-        await channel.permissionOverwrites.delete(target.id);
-      }
-      db.removeBan(channel.id, target.id);
+      await clearBan(channel, target);
     } else if (action === "permit") {
-      await channel.permissionOverwrites.edit(target.id, {
-        ViewChannel: true,
-        Connect: true
-      });
-      db.removeBan(channel.id, target.id);
-      db.addPermit(channel.id, target.id);
+      await allowJoin(channel, target);
     }
   });
   if (!ok) return message.reply(result("Owner Only", "Only the current owner can control this temporary voice channel."));
+  if (action === "ban" || action === "reject") {
+    return message.reply(result(action === "reject" ? "Rejected" : "Banned", `<@${target.id}> can still see this channel, but they cannot join it.`));
+  }
+  if (action === "permit") {
+    return message.reply(result("Permitted", `<@${target.id}> can join this channel even if it is locked or full.`));
+  }
   return message.reply(result(`${action[0].toUpperCase()}${action.slice(1)}`, `<@${target.id}> action completed.`));
 }
 

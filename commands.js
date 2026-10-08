@@ -189,7 +189,10 @@ async function handleCommand(message, client, prefix = "-", options = {}) {
             [
               "`-vc setup` · Open the setup wizard",
               "`-vc lock|unlock|ghost|unghost` · Manage your channel",
-              "`-vc kick|reject|ban|unban|permit @user|user-id` · Manage a member",
+              "`-vc kick @user` · Remove someone from your channel",
+              "`-vc ban|reject @user` · Block joining without hiding the channel",
+              "`-vc permit @user` · Let them join a locked or full channel",
+              "`-vc unban @user` · Clear a block",
               "`-vc claim` · Claim an unowned channel",
               "`-vc transfer @user` · Give your channel to someone in it",
               "`-vc limit <0-99>` · Set your channel limit",
