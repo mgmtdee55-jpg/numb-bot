@@ -57,22 +57,14 @@ async function editOverwrite(channel, id, data) {
   return true;
 }
 
-async function takeOwnership(message, disconnectPrevious) {
+async function takeOwnership(message, claimed) {
   const channel = currentChannel(message.member);
   const row = channel && db.getTempChannel(channel.id);
   if (!channel || !row) return reply(message, "Temporary VC Required", "Join a temporary voice channel created by this bot.");
-  const previous = row.owner_id;
   if (!db.forceOwner(channel.id, message.author.id)) {
     return reply(message, "Unable to Claim", "That channel is no longer managed.");
   }
-  if (disconnectPrevious && previous && previous !== message.author.id) {
-    const owner = message.guild.members.cache.get(previous);
-    const guard = store.getGuard(message.guild.id, previous);
-    if (owner?.voice?.channelId === channel.id && !guard?.shield) {
-      await owner.voice.disconnect("Voice rank forceclaim").catch(() => null);
-    }
-  }
-  return reply(message, disconnectPrevious ? "Channel Force Claimed" : "Ownership Forced", `You now own <#${channel.id}>.`);
+  return reply(message, claimed ? "Channel Force Claimed" : "Ownership Forced", `You now own <#${channel.id}>. The previous owner stays in the channel.`);
 }
 
 async function voiceOverride(message) {

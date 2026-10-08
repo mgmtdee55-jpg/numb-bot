@@ -160,7 +160,7 @@ function categories(prefix) {
       ["unfollow", "stop following"],
       ["bring", "pull one member"],
       ["inspect", "view voice state"],
-      ["forceclaim", "take over a VC"],
+      ["forceclaim", "become the VC owner"],
       ["stsu", "keep a member server-muted"],
       ["unstsu", "clear that mute"]
     ])],

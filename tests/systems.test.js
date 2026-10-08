@@ -246,6 +246,14 @@ test("franchise can force ownership and a lower rank cannot", async () => {
   assert.equal(titleOf(override), "Voice Override");
   const drag = await run(guild, member, "-dragall");
   assert.equal(titleOf(drag), "Rank Required");
+
+  db.forceOwner(channel.id, owner.id);
+  owner.voice.channel = channel;
+  owner.voice.channelId = channel.id;
+  const claimed = await run(guild, member, "-forceclaim");
+  assert.equal(titleOf(claimed), "Channel Force Claimed");
+  assert.equal(db.getTempChannel(channel.id).owner_id, member.id);
+  assert.equal(owner.voice.channelId, channel.id);
 });
 
 test("dragall moves only the named channel and muteall stays in the current call", async () => {
