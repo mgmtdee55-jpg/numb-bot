@@ -33,6 +33,130 @@ const VC_INTERFACE_ICONS = {
   limit: "1473734316331765857"
 };
 
+function bitDenied(overwrite, flag) {
+  const deny = overwrite?.deny;
+  return typeof deny?.has === "function" && deny.has(flag);
+}
+
+function bitAllowed(overwrite, flag) {
+  const allow = overwrite?.allow;
+  return typeof allow?.has === "function" && allow.has(flag);
+}
+
+function moveMemberOverwrites(guild, ownerId) {
+  const botId = guild.members?.me?.id || guild.client?.user?.id || null;
+  const overwrites = [
+    {
+      id: guild.roles.everyone.id,
+      allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect],
+      deny: [PermissionFlagsBits.MoveMembers]
+    },
+    {
+      id: ownerId,
+      allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect],
+      deny: [PermissionFlagsBits.MoveMembers]
+    }
+  ];
+  if (botId && botId !== ownerId && botId !== guild.roles.everyone.id) {
+    overwrites.push({
+      id: botId,
+      allow: [PermissionFlagsBits.MoveMembers]
+    });
+  }
+  return overwrites;
+}
+
+function occupantIds(channel) {
+  const ids = new Set();
+  if (typeof channel?.members?.keys === "function") {
+    for (const id of channel.members.keys()) ids.add(String(id));
+  }
+  const states = channel?.guild?.voiceStates?.cache;
+  if (typeof states?.values === "function") {
+    for (const state of states.values()) {
+      if (state?.channelId !== channel.id) continue;
+      const id = state.id || state.userId || state.member?.id;
+      if (id) ids.add(String(id));
+    }
+  }
+  return ids;
+}
+
+function moveRoleIds(guild) {
+  const ids = [];
+  const roles = guild?.roles?.cache;
+  if (typeof roles?.values !== "function") return ids;
+  const everyoneId = guild.roles?.everyone?.id;
+  for (const role of roles.values()) {
+    if (!role?.id || role.id === everyoneId) continue;
+    if (typeof role.permissions?.has !== "function") continue;
+    if (role.permissions.has(PermissionFlagsBits.MoveMembers) || role.permissions.has(PermissionFlagsBits.Administrator)) {
+      ids.push(String(role.id));
+    }
+  }
+  return ids;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function editMoveMembers(channel, id, allowed, reason) {
+  const data = { MoveMembers: allowed };
+  try {
+    await channel.permissionOverwrites.edit(id, data, { reason });
+  } catch (error) {
+    const wait = Math.min(5000, Math.round((Number(error?.retryAfter) || (error?.status === 429 ? 1.2 : 0)) * 1000));
+    if (!wait) throw error;
+    await sleep(wait);
+    await channel.permissionOverwrites.edit(id, data, { reason });
+  }
+}
+
+async function disableCallMoveMembers(channel, ownerId = null) {
+  if (typeof channel?.permissionOverwrites?.edit !== "function") return;
+  const guild = channel.guild;
+  const everyoneId = guild?.roles?.everyone?.id;
+  if (!everyoneId) return;
+  const botId = guild.members?.me?.id || guild.client?.user?.id || null;
+  const reason = "VoiceMaster: disconnects use vc kick, ban, or reject";
+  const cache = channel.permissionOverwrites.cache;
+  const denyIds = new Set([String(everyoneId)]);
+  if (ownerId && String(ownerId) !== String(botId)) denyIds.add(String(ownerId));
+  for (const id of occupantIds(channel)) {
+    if (String(id) !== String(botId)) denyIds.add(String(id));
+  }
+  for (const id of moveRoleIds(guild)) {
+    if (String(id) !== String(botId)) denyIds.add(String(id));
+  }
+  if (typeof cache?.values === "function") {
+    for (const overwrite of cache.values()) {
+      const id = overwrite?.id;
+      if (!id || String(id) === String(botId)) continue;
+      if (!bitDenied(overwrite, PermissionFlagsBits.MoveMembers) || bitAllowed(overwrite, PermissionFlagsBits.MoveMembers)) {
+        denyIds.add(String(id));
+      }
+    }
+  }
+  for (const id of denyIds) {
+    const overwrite = cache?.get?.(id);
+    if (bitDenied(overwrite, PermissionFlagsBits.MoveMembers) && !bitAllowed(overwrite, PermissionFlagsBits.MoveMembers)) continue;
+    try {
+      await editMoveMembers(channel, id, false, reason);
+    } catch (error) {
+      logThrottledError(`move-members:${guild.id}`, `[disable move members] ${channel.id}:${id}`, error);
+    }
+  }
+  const botOverwrite = botId ? cache?.get?.(botId) : null;
+  if (botId && botId !== everyoneId && (!bitAllowed(botOverwrite, PermissionFlagsBits.MoveMembers) || bitDenied(botOverwrite, PermissionFlagsBits.MoveMembers))) {
+    try {
+      await editMoveMembers(channel, botId, true, "VoiceMaster: bot disconnect for vc commands");
+    } catch (error) {
+      logThrottledError(`move-members:${guild.id}`, `[disable move members] ${channel.id}:${botId}`, error);
+    }
+  }
+}
+
 function channelHasOccupant(channel, userId = null) {
   const states = channel?.guild?.voiceStates?.cache;
   if (typeof states?.values === "function") {
@@ -298,16 +422,7 @@ async function createTempChannelInCategory(guild, member, config, categoryId) {
     parent: categoryId,
     bitrate: config.bitrate,
     userLimit: config.user_limit,
-    permissionOverwrites: [
-      {
-        id: guild.roles.everyone.id,
-        allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect]
-      },
-      {
-        id: member.id,
-        allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect]
-      }
-    ],
+    permissionOverwrites: moveMemberOverwrites(guild, member.id),
     reason: "VoiceMaster: temporary voice channel"
   });
 
@@ -319,6 +434,7 @@ async function createTempChannelInCategory(guild, member, config, categoryId) {
       interface_message_id: null,
       created_at: Date.now()
     });
+    await disableCallMoveMembers(channel, member.id);
     return channel;
   } catch (error) {
     if (!channelHasOccupant(channel)) {
@@ -543,6 +659,7 @@ async function reconcileGuild(guild, { tempBatchSize = Infinity, cursor = 0 } = 
             return;
           }
           if (row.owner_id && !channelHasOccupant(channel, row.owner_id)) db.clearOwner(row.channel_id, row.owner_id);
+          await disableCallMoveMembers(channel, row.owner_id);
           if (!channelHasOccupant(channel) && row.empty_since === null) {
             db.setEmptySince(row.channel_id, Date.now());
           } else if (channelHasOccupant(channel) && row.empty_since !== null) {
@@ -578,6 +695,7 @@ async function reconcileGuild(guild, { tempBatchSize = Infinity, cursor = 0 } = 
 module.exports = {
   createServerInterface,
   createTempChannel,
+  disableCallMoveMembers,
   cleanupEmptyTempChannels,
   cleanupTempChannel,
   renderVoiceChannelInterface,
