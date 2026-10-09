@@ -494,13 +494,13 @@ test("temp VCs use configured fields and contain exactly the ten requested butto
   assert.doesNotMatch(panel.description, /🔒|🔓|👻|👁️|❌|🚫|👤|➕|👑|👥/u);
 });
 
-test("temporary calls deny move members for everyone except the bot", async () => {
-  const guild = makeGuild("no-move-members-guild");
+test("join to create leaves move members neutral and does not edit permissions afterward", async () => {
+  const guild = makeGuild("neutral-move-members-guild");
   const category = makeCategory(guild);
   const member = makeMember(guild, "262626262626262626");
   db.setConfig({
     guild_id: guild.id,
-    j2c_channel_id: "j2c-no-move",
+    j2c_channel_id: "j2c-neutral-move",
     category_id: category.id,
     server_interface_channel_id: "disabled",
     server_interface_message_id: null,
@@ -512,23 +512,20 @@ test("temporary calls deny move members for everyone except the bot", async () =
   });
 
   const created = await voice.createTempChannel(guild, member, db.getConfig(guild.id));
-  const overwrites = created.createOptions.permissionOverwrites;
-  const everyone = overwrites.find((overwrite) => overwrite.id === guild.roles.everyone.id);
-  const owner = overwrites.find((overwrite) => overwrite.id === member.id);
-  const bot = overwrites.find((overwrite) => overwrite.id === guild.client.user.id);
-  assert.ok(everyone.deny.includes(PermissionFlagsBits.MoveMembers));
-  assert.ok(!everyone.allow.includes(PermissionFlagsBits.MoveMembers));
-  assert.ok(owner.deny.includes(PermissionFlagsBits.MoveMembers));
-  assert.ok(bot.allow.includes(PermissionFlagsBits.MoveMembers));
-
-  const channel = makeVoiceChannel(guild, "existing-move-call", [member]);
-  const flag = PermissionFlagsBits.MoveMembers;
-  const bits = (enabled) => ({ has: (value) => enabled && value === flag });
-  channel.permissionOverwrites.cache = new Map([
-    [guild.roles.everyone.id, { id: guild.roles.everyone.id, allow: bits(false), deny: bits(false) }],
-    [member.id, { id: member.id, allow: bits(true), deny: bits(false) }],
-    ["role-with-move", { id: "role-with-move", allow: bits(true), deny: bits(false) }]
+  assert.equal(created.permissionOverwrites.edits.length, 0);
+  assert.equal(created.deleted, false);
+  assert.deepEqual(created.createOptions.permissionOverwrites, [
+    {
+      id: guild.roles.everyone.id,
+      allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect]
+    },
+    {
+      id: member.id,
+      allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect]
+    }
   ]);
+
+  const channel = makeVoiceChannel(guild, "existing-neutral-call", [member]);
   db.addTemp({
     channel_id: channel.id,
     guild_id: guild.id,
@@ -537,48 +534,8 @@ test("temporary calls deny move members for everyone except the bot", async () =
     created_at: Date.now()
   });
   await voice.reconcileGuild(guild);
-  const edits = channel.permissionOverwrites.edits;
-  assert.equal(edits.find((edit) => edit.target === guild.roles.everyone.id).permissions.MoveMembers, false);
-  assert.equal(edits.find((edit) => edit.target === member.id).permissions.MoveMembers, false);
-  assert.equal(edits.find((edit) => edit.target === "role-with-move").permissions.MoveMembers, false);
-  assert.equal(edits.find((edit) => edit.target === guild.client.user.id).permissions.MoveMembers, true);
-
-  channel.permissionOverwrites.edits = [];
-  channel.permissionOverwrites.cache = new Map([
-    [guild.roles.everyone.id, { id: guild.roles.everyone.id, allow: bits(false), deny: bits(true) }],
-    [guild.client.user.id, { id: guild.client.user.id, allow: bits(true), deny: bits(false) }],
-    [member.id, { id: member.id, allow: bits(false), deny: bits(true) }]
-  ]);
-  await voice.disableCallMoveMembers(channel, member.id);
-  assert.equal(channel.permissionOverwrites.edits.length, 0);
-
-  const visitor = makeMember(guild, "272727272727272727");
-  const open = makeVoiceChannel(guild, "open-existing-call", [member, visitor]);
-  guild.roles.cache = new Map([
-    ["staff-move-role", {
-      id: "staff-move-role",
-      permissions: { has: (flag) => flag === PermissionFlagsBits.MoveMembers || flag === PermissionFlagsBits.Administrator }
-    }]
-  ]);
-  open.permissionOverwrites.cache = new Map([
-    [guild.roles.everyone.id, { id: guild.roles.everyone.id, allow: bits(false), deny: bits(false) }],
-    [member.id, { id: member.id, allow: bits(false), deny: bits(false) }]
-  ]);
-  db.addTemp({
-    channel_id: open.id,
-    guild_id: guild.id,
-    owner_id: member.id,
-    interface_message_id: null,
-    created_at: Date.now()
-  });
-  await voice.reconcileGuild(guild);
-  assert.equal(open.deleted, false);
   assert.equal(channel.deleted, false);
-  const openEdits = open.permissionOverwrites.edits;
-  for (const target of [guild.roles.everyone.id, member.id, visitor.id, "staff-move-role"]) {
-    assert.equal(openEdits.find((edit) => edit.target === target).permissions.MoveMembers, false);
-  }
-  assert.equal(openEdits.find((edit) => edit.target === guild.client.user.id).permissions.MoveMembers, true);
+  assert.equal(channel.permissionOverwrites.edits.length, 0);
 });
 
 test("unavailable guide emoji IDs are omitted rather than rendered as literal pseudo-emojis", async (t) => {
@@ -844,7 +801,7 @@ test("every interface button enforces ownership and performs its action", async 
   assert.equal(db.isPermitted(channel.id, target.id), true);
   const permitEdit = channel.permissionOverwrites.edits.at(-1);
   assert.equal(permitEdit.permissions.Connect, true);
-  assert.equal(permitEdit.permissions.MoveMembers, false);
+  assert.equal(permitEdit.permissions.MoveMembers, null);
   assert.notEqual(permitEdit.permissions.ViewChannel, false);
 
   const limitButton = makeInteraction(guild, "vc_limit");
@@ -1337,6 +1294,58 @@ test("J2C rejoin creates a new VC and leaves the old occupied channel claimable"
   assert.equal(oldChannel.deleted, false);
   assert.equal(oldChannel.members.has(remainingMember.id), true);
   assert.equal(remainingMember.voice.channelId, oldChannel.id);
+});
+
+test("the member who creates a call stays the owner even if ownership is cleared before the move finishes", async () => {
+  const guild = makeGuild("creator-stays-owner-guild");
+  const category = makeCategory(guild);
+  const j2c = makeVoiceChannel(guild);
+  const member = makeMember(guild, "323232323232323232", { channelId: j2c.id });
+  db.setConfig({
+    guild_id: guild.id,
+    j2c_channel_id: j2c.id,
+    category_id: category.id,
+    server_interface_channel_id: "disabled",
+    server_interface_message_id: null,
+    name_template: "{nickname}'s VC",
+    user_limit: 0,
+    bitrate: 64000,
+    cleanup_seconds: 300,
+    server_interface_enabled: 0
+  });
+  const handler = createVoiceStateHandler({
+    db,
+    createTempChannel: async (createdGuild, createdMember, config) => {
+      const channel = await voice.createTempChannel(createdGuild, createdMember, config);
+      db.clearOwner(channel.id, createdMember.id);
+      assert.equal(db.getTempChannel(channel.id).owner_id, null);
+      return channel;
+    },
+    renderVoiceChannelInterface: async () => {},
+    cleanupEmptyTempChannels: async () => {},
+    cleanupTempChannel: async () => {}
+  });
+
+  await handler(
+    { channelId: null },
+    { guild, id: member.id, member, channelId: j2c.id }
+  );
+
+  const created = guild.channels.cache.get(member.voice.channelId);
+  assert.ok(created);
+  assert.equal(db.getTempChannel(created.id).owner_id, member.id);
+
+  const waiting = makeVoiceChannel(guild, "owner-not-moved-yet");
+  db.addTemp({
+    channel_id: waiting.id,
+    guild_id: guild.id,
+    owner_id: member.id,
+    interface_message_id: null,
+    created_at: Date.now()
+  });
+  await voice.reconcileGuild(guild);
+  assert.equal(db.getTempChannel(waiting.id).owner_id, member.id);
+  assert.equal(waiting.deleted, false);
 });
 
 test("J2C category routing advances when each selected category reaches 99 connected members", async () => {
@@ -2078,7 +2087,7 @@ test("vc ban and vc reject block joining without hiding the channel", async () =
   assert.equal(db.isPermitted(channel.id, target.id), true);
   const permitEdit = channel.permissionOverwrites.edits.at(-1);
   assert.equal(permitEdit.permissions.Connect, true);
-  assert.equal(permitEdit.permissions.MoveMembers, false);
+  assert.equal(permitEdit.permissions.MoveMembers, null);
   assert.notEqual(permitEdit.permissions.ViewChannel, false);
 });
 

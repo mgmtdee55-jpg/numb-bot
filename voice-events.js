@@ -91,6 +91,7 @@ function createVoiceStateHandler({
               }
               await latestMember.voice.setChannel(temp.id, "VoiceMaster: created temporary voice channel");
               memberMoved = true;
+              if (typeof db.forceOwner === "function") db.forceOwner(temp.id, currentMember.id);
               return { temp, ownerId: currentMember.id };
             } finally {
               categoryReservation.release(memberMoved);

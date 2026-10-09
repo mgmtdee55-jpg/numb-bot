@@ -448,7 +448,7 @@ function shieldBlock(target) {
 async function revokeJoin(channel, target) {
   await channel.permissionOverwrites.edit(target.id, {
     Connect: false,
-    MoveMembers: false,
+    MoveMembers: null,
     ViewChannel: null
   });
   db.removePermit(channel.id, target.id);
@@ -459,7 +459,7 @@ async function revokeJoin(channel, target) {
 async function allowJoin(channel, target) {
   await channel.permissionOverwrites.edit(target.id, {
     Connect: true,
-    MoveMembers: false,
+    MoveMembers: null,
     ViewChannel: null
   });
   db.removeBan(channel.id, target.id);
@@ -472,7 +472,7 @@ async function clearBan(channel, target) {
   if (permitted) {
     await channel.permissionOverwrites.edit(target.id, {
       Connect: true,
-      MoveMembers: false,
+      MoveMembers: null,
       ViewChannel: null
     });
     return;
