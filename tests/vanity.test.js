@@ -118,17 +118,7 @@ test("vanity stays while the status has it, and leaves when they go offline or h
   connection.prepare("INSERT INTO vanity_config(guild_id, name, role_ids) VALUES(?,?,?) ON CONFLICT(guild_id) DO UPDATE SET name=excluded.name, role_ids=excluded.role_ids")
     .run(guild.id, "tunes", JSON.stringify([VIP]));
   const member = person(MEMBER, guild);
-  member.roles.cache = new Map([[VIP, { id: VIP }]]);
-  member.roles.add = async (roleId) => { member.roles.cache.set(roleId, { id: roleId }); };
-  member.roles.remove = async (roleId) => { member.roles.cache.delete(roleId); };
-  member.presence = { status: "online", activities: [] };
-  await vanity.applyMember(member);
-  assert.equal(member.roles.cache.has(VIP), true);
-
-  member.presence = { status: "online", activities: [{ type: ActivityType.Custom, state: "nope" }] };
-  await vanity.applyMember(member);
-  assert.equal(member.roles.cache.has(VIP), false);
-
+  member.roles.cache = new Map();
   let attempts = 0;
   member.roles.add = async (roleId) => {
     attempts += 1;
@@ -139,20 +129,82 @@ test("vanity stays while the status has it, and leaves when they go offline or h
     }
     member.roles.cache.set(roleId, { id: roleId });
   };
+  member.roles.remove = async (roleId) => { member.roles.cache.delete(roleId); };
   member.presence = { status: "online", activities: [{ type: ActivityType.Custom, state: "/tunes" }] };
   await vanity.applyMember(member);
   assert.equal(member.roles.cache.has(VIP), true);
   assert.equal(attempts, 2);
 
+  member.presence = { status: "online", activities: [] };
+  await vanity.applyMember(member);
+  assert.equal(member.roles.cache.has(VIP), true);
+
+  member.presence = { status: "online", activities: [{ type: ActivityType.Custom, state: "nope" }] };
+  await vanity.applyMember(member);
+  assert.equal(member.roles.cache.has(VIP), false);
+
+  member.presence = { status: "online", activities: [{ type: ActivityType.Custom, state: "tunes" }] };
+  await vanity.applyMember(member);
+  assert.equal(member.roles.cache.has(VIP), true);
+
   member.presence = { status: "offline", activities: [{ type: ActivityType.Custom, state: "tunes" }] };
   await vanity.applyMember(member);
   assert.equal(member.roles.cache.has(VIP), false);
 
-  member.roles.cache.set(VIP, { id: VIP });
+  member.presence = { status: "online", activities: [{ type: ActivityType.Custom, state: "tunes" }] };
+  await vanity.applyMember(member);
   member.presence = null;
   await vanity.applyMember(member, { missingMeansKeep: true });
   assert.equal(member.roles.cache.has(VIP), true);
   await vanity.applyMember(member);
   assert.equal(member.roles.cache.has(VIP), false);
   assert.equal(vanity.rewardDecision({ status: "dnd", activities: [{ type: 4, state: "TUNES" }] }, "tunes"), "grant");
+});
+
+test("a vanity role added by hand or another bot is left in place", async () => {
+  const guild = makeGuild();
+  const { connection } = require("../db");
+  connection.prepare("INSERT INTO vanity_config(guild_id, name, role_ids) VALUES(?,?,?) ON CONFLICT(guild_id) DO UPDATE SET name=excluded.name, role_ids=excluded.role_ids")
+    .run(guild.id, "tunes", JSON.stringify([VIP]));
+  const member = person(MEMBER, guild);
+  member.roles.cache = new Map([[VIP, { id: VIP }]]);
+  member.roles.add = async (roleId) => { member.roles.cache.set(roleId, { id: roleId }); };
+  member.roles.remove = async (roleId) => { member.roles.cache.delete(roleId); };
+  const before = person(MEMBER, guild);
+  before.roles.cache = new Map();
+  await vanity.observe(before, member);
+
+  member.presence = { status: "online", activities: [{ type: ActivityType.Custom, state: "nope" }] };
+  await vanity.applyMember(member);
+  assert.equal(member.roles.cache.has(VIP), true);
+
+  member.presence = { status: "offline", activities: [] };
+  await vanity.applyMember(member);
+  assert.equal(member.roles.cache.has(VIP), true);
+
+  member.presence = null;
+  await vanity.applyMember(member);
+  assert.equal(member.roles.cache.has(VIP), true);
+
+  member.presence = { status: "online", activities: [{ type: ActivityType.Custom, state: "tunes" }] };
+  await vanity.applyMember(member);
+  member.presence = { status: "offline", activities: [{ type: ActivityType.Custom, state: "tunes" }] };
+  await vanity.applyMember(member);
+  assert.equal(member.roles.cache.has(VIP), true);
+
+  member.roles.cache.delete(VIP);
+  member.presence = { status: "online", activities: [{ type: ActivityType.Custom, state: "tunes" }] };
+  await vanity.applyMember(member);
+  assert.equal(member.roles.cache.has(VIP), true);
+  const holding = person(MEMBER, guild);
+  holding.roles.cache = new Map([[VIP, { id: VIP }]]);
+  member.roles.cache.delete(VIP);
+  await vanity.observe(holding, member);
+  member.roles.cache.set(VIP, { id: VIP });
+  const empty = person(MEMBER, guild);
+  empty.roles.cache = new Map();
+  await vanity.observe(empty, member);
+  member.presence = { status: "offline", activities: [] };
+  await vanity.applyMember(member);
+  assert.equal(member.roles.cache.has(VIP), true);
 });

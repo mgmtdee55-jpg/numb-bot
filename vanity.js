@@ -21,6 +21,12 @@ CREATE TABLE IF NOT EXISTS vanity_config (
   name TEXT,
   role_ids TEXT NOT NULL DEFAULT '[]'
 );
+CREATE TABLE IF NOT EXISTS vanity_grants (
+  guild_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  role_id TEXT NOT NULL,
+  PRIMARY KEY (guild_id, user_id, role_id)
+);
 `);
 
 const readConfig = connection.prepare("SELECT name, role_ids FROM vanity_config WHERE guild_id=?");
@@ -28,6 +34,9 @@ const writeConfig = connection.prepare(`
   INSERT INTO vanity_config(guild_id, name, role_ids) VALUES(?,?,?)
   ON CONFLICT(guild_id) DO UPDATE SET name=excluded.name, role_ids=excluded.role_ids
 `);
+const readGrant = connection.prepare("SELECT 1 AS hit FROM vanity_grants WHERE guild_id=? AND user_id=? AND role_id=?");
+const writeGrant = connection.prepare("INSERT OR IGNORE INTO vanity_grants(guild_id, user_id, role_id) VALUES(?,?,?)");
+const dropGrant = connection.prepare("DELETE FROM vanity_grants WHERE guild_id=? AND user_id=? AND role_id=?");
 
 function canConfigure(member) {
   return access.isServerOwner(member) || access.isBotOwner(member?.id) || access.isGod(member);
@@ -96,11 +105,28 @@ function retryDelay(error) {
   return 0;
 }
 
+function rememberGrant(member, roleId) {
+  writeGrant.run(String(member.guild.id), String(member.id), String(roleId));
+}
+
+function forgetGrant(member, roleId) {
+  dropGrant.run(String(member.guild.id), String(member.id), String(roleId));
+}
+
+function grantedByBot(member, roleId) {
+  return !!readGrant.get(String(member.guild.id), String(member.id), String(roleId));
+}
+
 async function changeReward(member, roleId, grant) {
   for (let attempt = 0; attempt < 4; attempt += 1) {
     try {
-      if (grant) await roles.addRole(member, roleId, "Vanity status");
-      else await roles.removeRole(member, roleId, "Vanity status removed");
+      if (grant) {
+        await roles.addRole(member, roleId, "Vanity status");
+        rememberGrant(member, roleId);
+      } else {
+        await roles.removeRole(member, roleId, "Vanity status removed");
+        forgetGrant(member, roleId);
+      }
       return true;
     } catch (error) {
       const wait = retryDelay(error);
@@ -125,7 +151,8 @@ function summary(guild, config) {
     "Capitals are ignored, and numbers or symbols around it still count.",
     "`carTUNES`, `/tunes`, `tunes101`, and `@tUnEs` all match `tunes`.",
     "The reward stays while that word is in the status.",
-    "It is removed when the status no longer has it, or the member is offline or hidden."
+    "A reward this bot gave is removed when the word is gone, or the member is offline or hidden.",
+    "A role added by hand or by another bot stays."
   ].join("\n");
 }
 
@@ -211,8 +238,35 @@ async function applyMember(member, options = {}) {
   const grant = decision === "grant";
   for (const roleId of config.roleIds) {
     const has = !!member.roles?.cache?.has?.(roleId);
-    if (grant && !has) await changeReward(member, roleId, true);
-    else if (!grant && has) await changeReward(member, roleId, false);
+    if (!has) {
+      if (grant) await changeReward(member, roleId, true);
+      else forgetGrant(member, roleId);
+      continue;
+    }
+    if (!grant && grantedByBot(member, roleId)) await changeReward(member, roleId, false);
+  }
+}
+
+function diffRoles(before, after) {
+  const previous = new Set(before.roles?.cache?.keys?.() || []);
+  const next = new Set(after.roles?.cache?.keys?.() || []);
+  const added = [...next].filter((id) => !previous.has(id));
+  const removed = [...previous].filter((id) => !next.has(id));
+  return { added, removed };
+}
+
+async function observe(before, after) {
+  if (!after?.guild || after.user?.bot) return;
+  const config = getConfig(after.guild.id);
+  if (!config.roleIds.length) return;
+  const watched = new Set(config.roleIds);
+  const { added, removed } = diffRoles(before, after);
+  for (const roleId of removed) {
+    if (watched.has(String(roleId))) forgetGrant(after, roleId);
+  }
+  for (const roleId of added) {
+    if (!watched.has(String(roleId))) continue;
+    if (!roles.consumeRole(after.guild.id, after.id, roleId, "add")) forgetGrant(after, roleId);
   }
 }
 
@@ -345,6 +399,7 @@ module.exports = {
   statusText,
   rewardDecision,
   applyMember,
+  observe,
   open,
   handleCommand,
   handleInteraction,

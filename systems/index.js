@@ -71,6 +71,7 @@ function bindClient(client) {
   });
   client.on("guildMemberUpdate", (before, after) => {
     require("../protect").observe(before, after).catch((error) => console.error("[protect]", error));
+    require("../vanity").observe(before, after).catch((error) => console.error("[vanity]", error));
     require("../punish").syncMember(before, after).catch((error) => console.error("[punishment sync]", error));
     if (before.nickname !== after.nickname) {
       logs.sendLog(after.guild, "member", [
