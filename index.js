@@ -11,6 +11,7 @@ const { handleCommand, editedCommandContent } = require("./commands");
 const {
   createTempChannel,
   renderVoiceChannelInterface,
+  ensureTempInterface,
   reserveTempCategory,
   cleanupEmptyTempChannels,
   cleanupTempChannel,
@@ -145,7 +146,7 @@ client.on("messageDelete", async (message) => {
     const temp = db.getTempChannel(message.channelId);
     if (temp?.interface_message_id === message.id) {
       const channel = await message.guild.channels.fetch(message.channelId);
-      await renderVoiceChannelInterface(channel, temp.owner_id, temp.interface_message_id, true);
+      await ensureTempInterface(channel, temp.owner_id);
       return;
     }
     const config = db.getConfig(message.guild.id);

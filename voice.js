@@ -107,6 +107,24 @@ async function flushOwnerReleases(channelId) {
   }
 }
 
+function unknownVoiceState(error) {
+  return error?.code === 10065 || error?.status === 404;
+}
+
+async function ownerStillPresent(guild, channelId, userId) {
+  if (isChannelMember(guild, channelId, userId)) return true;
+  const fetchState = guild?.voiceStates?.fetch;
+  if (typeof fetchState !== "function") return false;
+  try {
+    const state = await fetchState.call(guild.voiceStates, userId, { force: true });
+    const stateChannel = voiceStateChannelId(state);
+    return stateChannel != null && sameId(stateChannel, channelId);
+  } catch (error) {
+    if (unknownVoiceState(error)) return false;
+    return true;
+  }
+}
+
 function channelHasOccupant(channel, userId = null) {
   const states = channel?.guild?.voiceStates?.cache;
   if (userId) {
@@ -130,14 +148,47 @@ function channelHasOccupant(channel, userId = null) {
   return (channel?.members?.size || 0) > 0;
 }
 
+function listedMessages(result) {
+  if (!result) return [];
+  if (typeof result.values === "function") return [...result.values()];
+  return [...result];
+}
+
+function olderMessageId(left, right) {
+  try {
+    return BigInt(left) < BigInt(right);
+  } catch {
+    return String(left) < String(right);
+  }
+}
+
+function messageMatches(message, botId, title) {
+  if (String(message?.author?.id) !== String(botId)) return false;
+  return (message.embeds || []).some((embed) => (embed?.title || embed?.data?.title) === title);
+}
+
 async function findBotMessage(channel, title) {
-  const botId = channel.client?.user?.id || channel.guild.members.me?.id;
+  const botId = channel.client?.user?.id || channel.guild?.members?.me?.id;
   if (!botId) return null;
-  const messages = await channel.messages.fetch({ limit: 25 });
-  return messages.find((message) =>
-    message.author.id === botId &&
-    message.embeds.some((embed) => embed.title === title)
-  ) || null;
+  let before = null;
+  const seen = new Set();
+  for (let page = 0; page < 4; page += 1) {
+    const query = { limit: 50 };
+    if (before) query.before = before;
+    const list = listedMessages(await channel.messages.fetch(query));
+    const found = list.find((message) => messageMatches(message, botId, title));
+    if (found) return found;
+    if (list.length < 50) return null;
+    const oldest = list.reduce((lowest, message) => {
+      if (!message?.id) return lowest;
+      if (!lowest || olderMessageId(message.id, lowest)) return message.id;
+      return lowest;
+    }, null);
+    if (!oldest || seen.has(oldest)) return null;
+    seen.add(oldest);
+    before = oldest;
+  }
+  return null;
 }
 
 async function getInterfaceEmojiStrings(guild) {
@@ -339,6 +390,37 @@ function renderName(template, member) {
     .replaceAll("{username}", member.user.username)
     .replaceAll("{user.mention}", `<@${member.id}>`)
     .slice(0, 100);
+}
+
+async function ensureTempInterface(channel, ownerId) {
+  if (tempInterfaceTasks.has(channel.id)) return tempInterfaceTasks.get(channel.id);
+  const task = (async () => {
+    const fresh = db.getTempChannel(channel.id);
+    const savedMessageId = fresh?.interface_message_id || null;
+    const panelOwner = fresh?.owner_id ?? ownerId ?? null;
+    if (savedMessageId) {
+      try {
+        return await channel.messages.fetch(savedMessageId);
+      } catch (error) {
+        if (error.code !== 10008) throw error;
+      }
+    }
+    const existingMessage = await findBotMessage(channel, "VoiceMaster Interface");
+    if (existingMessage) {
+      if (existingMessage.id !== savedMessageId) db.updateTempInterface(channel.id, existingMessage.id);
+      return existingMessage;
+    }
+    const panel = await buildVoiceChannelInterfacePayload(channel.guild, panelOwner);
+    const message = await channel.send(panel);
+    db.updateTempInterface(channel.id, message.id);
+    return message;
+  })();
+  tempInterfaceTasks.set(channel.id, task);
+  try {
+    return await task;
+  } finally {
+    tempInterfaceTasks.delete(channel.id);
+  }
 }
 
 async function renderVoiceChannelInterface(channel, ownerId, savedMessageId = null, recoverOrphan = false) {
@@ -624,33 +706,24 @@ async function reconcileGuild(guild, { tempBatchSize = Infinity, cursor = 0 } = 
             db.markTempDeleted(row.channel_id);
             return;
           }
+          const fresh = db.getTempChannel(row.channel_id) || row;
           if (
-            row.owner_id &&
-            !ownerReleasePending(row.channel_id) &&
+            fresh.owner_id &&
+            !ownerReleasePending(fresh.channel_id) &&
             channelHasOccupant(channel) &&
-            !channelHasOccupant(channel, row.owner_id) &&
-            (guild.voiceStates?.cache?.size || 0) > 0
+            !channelHasOccupant(channel, fresh.owner_id) &&
+            (guild.voiceStates?.cache?.size || 0) > 0 &&
+            !await ownerStillPresent(guild, fresh.channel_id, fresh.owner_id)
           ) {
-            db.clearOwner(row.channel_id, row.owner_id);
+            db.clearOwner(fresh.channel_id, fresh.owner_id);
           }
-          if (!channelHasOccupant(channel) && row.empty_since === null) {
-            db.setEmptySince(row.channel_id, Date.now());
-          } else if (channelHasOccupant(channel) && row.empty_since !== null) {
-            db.setEmptySince(row.channel_id, null);
+          if (!channelHasOccupant(channel) && fresh.empty_since === null) {
+            db.setEmptySince(fresh.channel_id, Date.now());
+          } else if (channelHasOccupant(channel) && fresh.empty_since !== null) {
+            db.setEmptySince(fresh.channel_id, null);
           }
-          let interfaceMissing = !row.interface_message_id;
-          if (row.interface_message_id) {
-            await channel.messages.fetch(row.interface_message_id).catch((error) => {
-              if (error.code === 10008) {
-                interfaceMissing = true;
-                return null;
-              }
-              throw error;
-            });
-          }
-          if (interfaceMissing) {
-            await renderVoiceChannelInterface(channel, row.owner_id, row.interface_message_id, true);
-          }
+          const current = db.getTempChannel(fresh.channel_id);
+          if (current) await ensureTempInterface(channel, current.owner_id);
         } catch (error) {
           logThrottledError(
             `temp-interface-recovery:${guild.id}`,
@@ -672,7 +745,8 @@ module.exports = {
   cleanupTempChannel,
   renderVoiceChannelInterface,
   buildVoiceChannelInterfacePayload,
-  ensureTempInterface: renderVoiceChannelInterface,
+  ensureTempInterface,
+  ownerStillPresent,
   reconcileGuild,
   panelEmbed,
   panelRows,

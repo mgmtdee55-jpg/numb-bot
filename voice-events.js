@@ -1,7 +1,7 @@
 const { withChannelLock } = require("./channel-lock");
 const {
   reserveTempCategory: reserveConfiguredTempCategory,
-  isChannelMember,
+  ownerStillPresent,
   scheduleOwnerRelease,
   cancelOwnerRelease
 } = require("./voice");
@@ -68,7 +68,7 @@ function createVoiceStateHandler({
             if (!managed) return;
             const memberId = oldState.member?.id || oldState.id;
             if (!memberId || String(managed.owner_id) !== String(memberId)) return;
-            if (isChannelMember(guild, oldState.channelId, memberId)) {
+            if (await ownerStillPresent(guild, oldState.channelId, memberId)) {
               cancelOwnerRelease(oldState.channelId, memberId);
               return;
             }
@@ -77,10 +77,10 @@ function createVoiceStateHandler({
               db.clearOwner(oldState.channelId, memberId);
               return;
             }
-            scheduleOwnerRelease(oldState.channelId, memberId, () => withChannelLock(oldState.channelId, () => {
+            scheduleOwnerRelease(oldState.channelId, memberId, () => withChannelLock(oldState.channelId, async () => {
               const current = db.getTempChannel(oldState.channelId);
               if (!current || String(current.owner_id) !== String(memberId)) return;
-              if (isChannelMember(guild, oldState.channelId, memberId)) return;
+              if (await ownerStillPresent(guild, oldState.channelId, memberId)) return;
               db.clearOwner(oldState.channelId, memberId);
             }));
           });

@@ -1240,6 +1240,114 @@ test("owner who reconnects before the call is claimable keeps ownership", async 
   assert.equal(db.getTempChannel(channel.id).owner_id, owner.id);
 });
 
+test("a stale voice cache keeps the owner and does not post another interface", async () => {
+  const guild = makeGuild("owner-stale-cache-guild");
+  const owner = makeMember(guild, "272727272727272727");
+  const other = makeMember(guild, "272727272727272728");
+  const channel = makeVoiceChannel(guild, "owner-stale-cache-channel", [owner, other]);
+  db.setConfig({
+    guild_id: guild.id,
+    j2c_channel_id: "owner-stale-j2c",
+    category_id: "owner-stale-category",
+    server_interface_channel_id: "disabled",
+    server_interface_message_id: null,
+    name_template: "{nickname}'s VC",
+    user_limit: 0,
+    bitrate: 64000,
+    cleanup_seconds: 300,
+    server_interface_enabled: 0
+  });
+  const panel = {
+    id: "272727272727272001",
+    author: { id: guild.client.user.id },
+    embeds: [{ title: "VoiceMaster Interface" }],
+    edits: 0,
+    async edit() {
+      this.edits += 1;
+      return this;
+    }
+  };
+  const fillers = Array.from({ length: 50 }, (_, index) => ({
+    id: String(272727272727273000n + BigInt(index)),
+    author: { id: "person" },
+    embeds: []
+  }));
+  channel.messages.fetch = async (arg) => {
+    if (arg && typeof arg === "object") return arg.before ? [panel] : fillers;
+    throw discordError(10008);
+  };
+  db.addTemp({
+    channel_id: channel.id,
+    guild_id: guild.id,
+    owner_id: owner.id,
+    interface_message_id: "missing-panel",
+    created_at: Date.now()
+  });
+  owner.voice.channel = null;
+  owner.voice.channelId = null;
+  channel.members.delete(owner.id);
+  guild.voiceStates.cache.set(other.id, { id: other.id, channelId: channel.id });
+  guild.voiceStates.fetch = async (userId) => (
+    userId === owner.id ? { id: owner.id, channelId: channel.id } : { id: userId, channelId: null }
+  );
+
+  await voice.reconcileGuild(guild);
+  assert.equal(db.getTempChannel(channel.id).owner_id, owner.id);
+  assert.equal(channel.sent.length, 0);
+  assert.equal(panel.edits, 0);
+  assert.equal(db.getTempChannel(channel.id).interface_message_id, panel.id);
+
+  const handler = createVoiceStateHandler({
+    db,
+    createTempChannel: async () => ({ id: "unused" }),
+    renderVoiceChannelInterface: async () => {},
+    cleanupEmptyTempChannels: async () => {},
+    cleanupTempChannel: async () => {}
+  });
+  await handler(
+    { channelId: channel.id, id: owner.id, member: owner },
+    { guild, id: owner.id, member: owner, channelId: null }
+  );
+  await voice.flushOwnerReleases(channel.id);
+  assert.equal(db.getTempChannel(channel.id).owner_id, owner.id);
+});
+
+test("an owner who has really left is cleared once Discord confirms it", async () => {
+  const guild = makeGuild("owner-confirmed-left-guild");
+  const owner = makeMember(guild, "282828282828282828");
+  const other = makeMember(guild, "282828282828282829");
+  const channel = makeVoiceChannel(guild, "owner-confirmed-left-channel", [owner, other]);
+  db.setConfig({
+    guild_id: guild.id,
+    j2c_channel_id: "owner-left-j2c",
+    category_id: "owner-left-category",
+    server_interface_channel_id: "disabled",
+    server_interface_message_id: null,
+    name_template: "{nickname}'s VC",
+    user_limit: 0,
+    bitrate: 64000,
+    cleanup_seconds: 300,
+    server_interface_enabled: 0
+  });
+  db.addTemp({
+    channel_id: channel.id,
+    guild_id: guild.id,
+    owner_id: owner.id,
+    interface_message_id: null,
+    created_at: Date.now()
+  });
+  owner.voice.channel = null;
+  owner.voice.channelId = null;
+  channel.members.delete(owner.id);
+  guild.voiceStates.cache.set(other.id, { id: other.id, channelId: channel.id });
+  guild.voiceStates.fetch = async () => {
+    throw Object.assign(new Error("Unknown Voice State"), { code: 10065 });
+  };
+
+  await voice.reconcileGuild(guild);
+  assert.equal(db.getTempChannel(channel.id).owner_id, null);
+});
+
 test("voice-state duplicate and in-flight-leave cases are serialized", async () => {
   let creates = 0;
   let cleanups = 0;
