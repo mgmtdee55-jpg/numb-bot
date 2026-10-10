@@ -14,6 +14,7 @@ const WHO = {
   lock: "Founder+", unlock: "Founder+", hide: "Founder+", unhide: "Founder+",
   lockall: "Founder+", unlockall: "Founder+", nuke: "Founder+ · 25s", lockdown: "Founder+", unlockdown: "Founder+",
   logging: "Gods+", "logging set": "Gods+", "logging remove": "Gods+", "logging test": "Gods+", logs: "Gods+",
+  auditlog: "Gods+",
   modlogreset: "Gods+",
   "role limit set": "Gods+", "role limit remove": "Gods+", "role limit view": "Gods+",
   vc: "Everyone", "vc setup": "Owner", "vc lock": "Everyone", "vc unlock": "Everyone",
@@ -98,7 +99,8 @@ function categories(prefix) {
       ["mute", "ask server mute or chat mute"],
       ["servermute", "server mute in voice"],
       ["camblacklist", "take camera roles"],
-      ["cam set", "choose the camera role"]
+      ["cam set", "choose the camera role"],
+      ["auditlog", "recent mutes, deafens, disconnects, timeouts, and bans"]
     ])],
     ["Info", block(prefix, [
       ["avatar", "show an avatar"],

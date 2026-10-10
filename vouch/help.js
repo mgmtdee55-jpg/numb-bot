@@ -87,6 +87,7 @@ function moderationText(prefix) {
     `\`${p}rmute @user\` / \`${p}reactionmute\` — toggle reaction mute`,
     `\`${p}mute @user\` — ask server mute or chat mute`,
     `\`${p}servermute @user\``,
+    `\`${p}auditlog @user\` — recent server mutes, deafens, disconnects, timeouts, and bans`,
     `\`${p}cam set @role\` / \`${p}camblacklist set @role\` / \`${p}camblacklist @user\``
   ].join("\n");
 }

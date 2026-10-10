@@ -8,6 +8,7 @@ const catalog = require("./vouch/catalog");
 const vouch = require("./vouch");
 const snipe = require("./snipe");
 const stats = require("./stats");
+const auditlog = require("./auditlog");
 
 function commandName(args, prefix) {
   const head = String(args[0] || "").toLowerCase();
@@ -78,6 +79,7 @@ async function handleCommand(message, args, prefix) {
     await stats.handleCommand(message, name, args);
     return true;
   }
+  if (await auditlog.handleCommand(message, name, args)) return true;
   return false;
 }
 
@@ -102,6 +104,7 @@ async function handleInteraction(interaction) {
   if (id.startsWith("spanter:protect:")) return require("./protect").handleInteraction(interaction);
   if (id.startsWith("spanter:snipe:")) return snipe.handleButton(interaction);
   if (id.startsWith("spanter:modstats:")) return stats.handleButton(interaction);
+  if (id.startsWith("spanter:auditlog:")) return auditlog.handleButton(interaction);
   if (id.startsWith("spanter:serversetup:")) return require("./punish").handleSetup(interaction);
   if (id.startsWith("spanter:mute:")) return require("./punish").handleMuteButton(interaction);
   if (id.startsWith("spanter:vcedit:")) return require("./vc-features").handleButton(interaction);
