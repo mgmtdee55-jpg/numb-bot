@@ -53,7 +53,8 @@ const WHO = {
   embedcreate: "Everyone", instagram: "Everyone", tiktok: "Everyone", roblox: "Everyone",
   "giveaways start": "Gods+", "giveaways reroll": "Gods+", "gw start": "Gods+", "gw reroll": "Gods+",
   "set gw host": "Gods+", modsetup: "Gods+",
-  "vanity set": "Gods+", "vanity reward": "Gods+", vanitysetup: "Gods+", vanity: "Gods+"
+  "vanity set": "Gods+", "vanity reward": "Gods+", vanitysetup: "Gods+", vanity: "Gods+",
+  protect: "Gods and the server owner", protected: "Everyone", plist: "Everyone", protectedlist: "Everyone"
 };
 
 function line(prefix, command, blurb) {
@@ -254,6 +255,12 @@ function categories(prefix) {
       ["vanity set", "set the status word"],
       ["vanity reward", "set the reward roles"],
       ["vanitysetup", "open the vanity panel"]
+    ])],
+    ["Protection", block(prefix, [
+      ["protect", "protect a role or user"],
+      ["protected", "people you protect"],
+      ["plist", "everyone protected"],
+      ["protectedlist", "everyone protected"]
     ])],
     ["Giveaways", block(prefix, [
       ["giveaways start", "start a giveaway"],

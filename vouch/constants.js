@@ -47,6 +47,7 @@ const BUILTIN_COMMANDS = new Set([
   "inspect", "forceclaim", "stfu", "unstfu", "stsu", "unstsu", "modsetup", "modlogreset", "voice", "rankinfo", "unrank", "afk",
   "embedcreate", "instagram", "ig", "insta", "tiktok", "roblox", "giveaways", "gw", "voicemaster", "set",
   "vanity", "vanitysetup", "snipe", "s", "clearsnipe", "cs", "modstats", "viewstats",
+  "protect", "plist", "protectedlist", "protected",
   "serversetup", "jail", "unjail", "cmute", "chatmute", "imute", "imagemute", "rmute", "reactionmute",
   "mute", "servermute", "cam", "camblacklist"
 ]);

@@ -20,6 +20,8 @@ const DEFAULT_CATEGORY_OVERFLOW_THRESHOLD = 99;
 const MAX_TEMP_CATEGORIES = 3;
 const DISCORD_CATEGORY_CHANNEL_CAP = 50;
 const CATEGORY_RESERVATION_TTL_MS = 10000;
+const OWNER_RELEASE_GRACE_MS = 5000;
+const pendingOwnerReleases = new Map();
 const VC_INTERFACE_ICONS = {
   lock: "1472443164995358872",
   unlock: "1472443249745723402",
@@ -43,6 +45,66 @@ function voiceStateChannelId(state) {
 
 function voiceStateUserId(state) {
   return state?.id || state?.userId || state?.member?.id || null;
+}
+
+function isChannelMember(guild, channelId, userId) {
+  if (!guild || channelId == null || userId == null) return false;
+  const channel = guild.channels?.cache?.get?.(channelId) || guild.channels?.cache?.get?.(String(channelId));
+  if (channel && channelHasOccupant(channel, userId)) return true;
+  const state = guild.voiceStates?.cache?.get?.(String(userId)) || guild.voiceStates?.cache?.get?.(userId);
+  const stateChannel = state?.channelId || state?.channel?.id || null;
+  if (stateChannel != null && sameId(stateChannel, channelId)) return true;
+  const member = guild.members?.cache?.get?.(String(userId)) || guild.members?.cache?.get?.(userId);
+  const memberChannel = member?.voice?.channelId || member?.voice?.channel?.id || null;
+  return memberChannel != null && sameId(memberChannel, channelId);
+}
+
+function ownerReleasePending(channelId) {
+  return pendingOwnerReleases.has(String(channelId));
+}
+
+function cancelOwnerRelease(channelId, userId) {
+  const key = String(channelId);
+  const entry = pendingOwnerReleases.get(key);
+  if (!entry) return false;
+  if (userId != null && String(entry.userId) !== String(userId)) return false;
+  clearTimeout(entry.timer);
+  pendingOwnerReleases.delete(key);
+  return true;
+}
+
+function scheduleOwnerRelease(channelId, userId, callback) {
+  const key = String(channelId);
+  cancelOwnerRelease(key);
+  let ran = false;
+  const entry = {
+    userId: String(userId),
+    timer: null,
+    run: () => {
+      if (ran) return null;
+      ran = true;
+      clearTimeout(entry.timer);
+      if (pendingOwnerReleases.get(key) === entry) pendingOwnerReleases.delete(key);
+      return callback();
+    }
+  };
+  entry.timer = setTimeout(() => {
+    entry.run();
+  }, OWNER_RELEASE_GRACE_MS);
+  entry.timer.unref?.();
+  pendingOwnerReleases.set(key, entry);
+  return entry;
+}
+
+async function flushOwnerReleases(channelId) {
+  const entries = channelId == null
+    ? [...pendingOwnerReleases.entries()]
+    : [[String(channelId), pendingOwnerReleases.get(String(channelId))]].filter(([, entry]) => entry);
+  for (const [key, entry] of entries) {
+    pendingOwnerReleases.delete(key);
+    clearTimeout(entry.timer);
+    await entry.run();
+  }
 }
 
 function channelHasOccupant(channel, userId = null) {
@@ -488,7 +550,6 @@ async function cleanupTempChannelUnlocked(guild, row, config = db.getConfig(guil
     }
     if (channelHasOccupant(channel)) {
       if (row.empty_since !== null) db.setEmptySince(row.channel_id, null);
-      if (row.owner_id && !channelHasOccupant(channel, row.owner_id)) db.clearOwner(row.channel_id, row.owner_id);
       return;
     }
 
@@ -563,7 +624,13 @@ async function reconcileGuild(guild, { tempBatchSize = Infinity, cursor = 0 } = 
             db.markTempDeleted(row.channel_id);
             return;
           }
-          if (row.owner_id && channelHasOccupant(channel) && !channelHasOccupant(channel, row.owner_id)) {
+          if (
+            row.owner_id &&
+            !ownerReleasePending(row.channel_id) &&
+            channelHasOccupant(channel) &&
+            !channelHasOccupant(channel, row.owner_id) &&
+            (guild.voiceStates?.cache?.size || 0) > 0
+          ) {
             db.clearOwner(row.channel_id, row.owner_id);
           }
           if (!channelHasOccupant(channel) && row.empty_since === null) {
@@ -610,6 +677,12 @@ module.exports = {
   panelEmbed,
   panelRows,
   reserveTempCategory,
+  isChannelMember,
+  scheduleOwnerRelease,
+  cancelOwnerRelease,
+  ownerReleasePending,
+  flushOwnerReleases,
+  OWNER_RELEASE_GRACE_MS,
   configuredCategoryIds,
   categoryOverflowThreshold,
   DEFAULT_CATEGORY_OVERFLOW_THRESHOLD,

@@ -78,6 +78,39 @@ function statusText(presence) {
   return "";
 }
 
+function rewardDecision(presence, name, { missingMeansKeep = false } = {}) {
+  if (!presence) return missingMeansKeep ? "keep" : "remove";
+  const status = presence.status || "";
+  if (!status || status === "offline" || status === "invisible") return "remove";
+  const text = statusText(presence);
+  if (text && hasVanity(text, name)) return "grant";
+  const hasCustom = activityList(presence).some((activity) => activity?.type === ActivityType.Custom || activity?.type === 4);
+  if (!hasCustom && !text) return "keep";
+  return "remove";
+}
+
+function retryDelay(error) {
+  const retryAfter = Number(error?.retryAfter);
+  if (retryAfter > 0) return Math.min(5000, Math.round(retryAfter * 1000));
+  if (error?.status === 429 || error?.code === 429) return 1200;
+  return 0;
+}
+
+async function changeReward(member, roleId, grant) {
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    try {
+      if (grant) await roles.addRole(member, roleId, "Vanity status");
+      else await roles.removeRole(member, roleId, "Vanity status removed");
+      return true;
+    } catch (error) {
+      const wait = retryDelay(error);
+      if (!wait || attempt === 3) return false;
+      await new Promise((resolve) => setTimeout(resolve, wait));
+    }
+  }
+  return false;
+}
+
 function roleList(guild, roleIds) {
   if (!roleIds.length) return "Not set";
   return roleIds.map((id) => guild?.roles?.cache?.get(id)?.name ? `<@&${id}>` : `\`${id}\``).join(", ");
@@ -91,7 +124,8 @@ function summary(guild, config) {
     "A custom status gets the reward when it contains that word.",
     "Capitals are ignored, and numbers or symbols around it still count.",
     "`carTUNES`, `/tunes`, `tunes101`, and `@tUnEs` all match `tunes`.",
-    "The roles are removed when that word is no longer in the status."
+    "The reward stays while that word is in the status.",
+    "It is removed when the status no longer has it, or the member is offline or hidden."
   ].join("\n");
 }
 
@@ -168,20 +202,17 @@ function resolveRoles(message, text) {
   return [...found.values()];
 }
 
-async function applyMember(member) {
+async function applyMember(member, options = {}) {
   if (!member?.guild || member.user?.bot) return;
   const config = getConfig(member.guild.id);
   if (!config.name || !config.roleIds.length) return;
-  const text = statusText(member.presence);
-  if (text == null) return;
-  const matched = hasVanity(text, config.name);
+  const decision = rewardDecision(member.presence, config.name, options);
+  if (decision === "keep") return;
+  const grant = decision === "grant";
   for (const roleId of config.roleIds) {
-    const has = member.roles?.cache?.has?.(roleId);
-    if (matched && !has) {
-      await roles.addRole(member, roleId, "Vanity status").catch(() => null);
-    } else if (!matched && has) {
-      await roles.removeRole(member, roleId, "Vanity status removed").catch(() => null);
-    }
+    const has = !!member.roles?.cache?.has?.(roleId);
+    if (grant && !has) await changeReward(member, roleId, true);
+    else if (!grant && has) await changeReward(member, roleId, false);
   }
 }
 
@@ -195,7 +226,7 @@ async function syncGuild(guild) {
   }
   if (!members || typeof members.values !== "function") return;
   for (const member of members.values()) {
-    await applyMember(member);
+    await applyMember(member, { missingMeansKeep: true });
   }
 }
 
@@ -312,6 +343,8 @@ module.exports = {
   getConfig,
   hasVanity,
   statusText,
+  rewardDecision,
+  applyMember,
   open,
   handleCommand,
   handleInteraction,

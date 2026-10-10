@@ -1117,10 +1117,15 @@ test("returning former owner does not regain ownership automatically", async () 
     cleanupTempChannel: async () => {}
   });
 
+  formerOwner.voice.channel = null;
+  formerOwner.voice.channelId = null;
+  channel.members.delete(formerOwner.id);
   await handler(
     { channelId: channel.id, id: formerOwner.id },
     { guild, id: formerOwner.id, member: formerOwner, channelId: null }
   );
+  assert.equal(db.getTempChannel(channel.id).owner_id, formerOwner.id);
+  await voice.flushOwnerReleases(channel.id);
   assert.equal(db.getTempChannel(channel.id).owner_id, null);
 
   const claimMessage = makeMessage(guild, "-vc claim", claimer, claimer);
@@ -1135,6 +1140,104 @@ test("returning former owner does not regain ownership automatically", async () 
     { guild, id: formerOwner.id, member: formerOwner, channelId: channel.id }
   );
   assert.equal(db.getTempChannel(channel.id).owner_id, claimer.id);
+});
+
+test("a voice blip does not take ownership from someone still in the call", async () => {
+  const guild = makeGuild("owner-blip-guild");
+  const owner = makeMember(guild, "252525252525252525");
+  const other = makeMember(guild, "252525252525252526");
+  const channel = makeVoiceChannel(guild, "owner-blip-channel", [owner, other]);
+  db.setConfig({
+    guild_id: guild.id,
+    j2c_channel_id: "owner-blip-j2c",
+    category_id: "owner-blip-category",
+    server_interface_channel_id: "disabled",
+    server_interface_message_id: null,
+    name_template: "{nickname}'s VC",
+    user_limit: 0,
+    bitrate: 64000,
+    cleanup_seconds: 0,
+    server_interface_enabled: 0
+  });
+  db.addTemp({
+    channel_id: channel.id,
+    guild_id: guild.id,
+    owner_id: owner.id,
+    interface_message_id: null,
+    created_at: Date.now()
+  });
+  const handler = createVoiceStateHandler({
+    db,
+    createTempChannel: async () => ({ id: "unused" }),
+    renderVoiceChannelInterface: async () => {},
+    cleanupEmptyTempChannels: voice.cleanupEmptyTempChannels,
+    cleanupTempChannel: voice.cleanupTempChannel
+  });
+
+  await handler(
+    { channelId: channel.id, id: owner.id, member: owner },
+    { guild, id: owner.id, member: owner, channelId: null }
+  );
+  await voice.reconcileGuild(guild);
+  await voice.flushOwnerReleases(channel.id);
+  assert.equal(db.getTempChannel(channel.id).owner_id, owner.id);
+  assert.equal(channel.deleted, false);
+});
+
+test("owner who reconnects before the call is claimable keeps ownership", async () => {
+  const guild = makeGuild("owner-reconnect-guild");
+  const owner = makeMember(guild, "262626262626262627");
+  const other = makeMember(guild, "262626262626262628");
+  const channel = makeVoiceChannel(guild, "owner-reconnect-channel", [owner, other]);
+  db.setConfig({
+    guild_id: guild.id,
+    j2c_channel_id: "owner-reconnect-j2c",
+    category_id: "owner-reconnect-category",
+    server_interface_channel_id: "disabled",
+    server_interface_message_id: null,
+    name_template: "{nickname}'s VC",
+    user_limit: 0,
+    bitrate: 64000,
+    cleanup_seconds: 0,
+    server_interface_enabled: 0
+  });
+  db.addTemp({
+    channel_id: channel.id,
+    guild_id: guild.id,
+    owner_id: owner.id,
+    interface_message_id: null,
+    created_at: Date.now()
+  });
+  const handler = createVoiceStateHandler({
+    db,
+    createTempChannel: async () => ({ id: "unused" }),
+    renderVoiceChannelInterface: async () => {},
+    cleanupEmptyTempChannels: async () => {},
+    cleanupTempChannel: async () => {}
+  });
+
+  owner.voice.channel = null;
+  owner.voice.channelId = null;
+  channel.members.delete(owner.id);
+  await handler(
+    { channelId: channel.id, id: owner.id },
+    { guild, id: owner.id, member: owner, channelId: null }
+  );
+  assert.equal(db.getTempChannel(channel.id).owner_id, owner.id);
+  guild.voiceStates.cache.set(other.id, { id: other.id, channelId: channel.id });
+  await voice.reconcileGuild(guild);
+  assert.equal(db.getTempChannel(channel.id).owner_id, owner.id);
+
+  owner.voice.channel = channel;
+  owner.voice.channelId = channel.id;
+  channel.members.set(owner.id, owner);
+  await handler(
+    { channelId: null, id: owner.id },
+    { guild, id: owner.id, member: owner, channelId: channel.id }
+  );
+  await voice.reconcileGuild(guild);
+  await voice.flushOwnerReleases(channel.id);
+  assert.equal(db.getTempChannel(channel.id).owner_id, owner.id);
 });
 
 test("voice-state duplicate and in-flight-leave cases are serialized", async () => {

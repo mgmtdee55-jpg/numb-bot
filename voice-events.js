@@ -1,5 +1,10 @@
 const { withChannelLock } = require("./channel-lock");
-const { reserveTempCategory: reserveConfiguredTempCategory } = require("./voice");
+const {
+  reserveTempCategory: reserveConfiguredTempCategory,
+  isChannelMember,
+  scheduleOwnerRelease,
+  cancelOwnerRelease
+} = require("./voice");
 const { logThrottledError } = require("./log-throttle");
 
 function createVoiceStateHandler({
@@ -50,6 +55,11 @@ function createVoiceStateHandler({
       const config = db.getConfig(guild.id);
       if (!config) return;
 
+      const joinedMemberId = newState.member?.id || newState.id;
+      if (newState.channelId && joinedMemberId) {
+        cancelOwnerRelease(newState.channelId, joinedMemberId);
+      }
+
       if (oldState.channelId && oldState.channelId !== newState.channelId) {
         const managedBeforeLock = db.getTempChannel(oldState.channelId);
         if (managedBeforeLock) {
@@ -57,7 +67,22 @@ function createVoiceStateHandler({
             const managed = db.getTempChannel(oldState.channelId);
             if (!managed) return;
             const memberId = oldState.member?.id || oldState.id;
-            if (managed.owner_id === memberId) db.clearOwner(oldState.channelId, memberId);
+            if (!memberId || String(managed.owner_id) !== String(memberId)) return;
+            if (isChannelMember(guild, oldState.channelId, memberId)) {
+              cancelOwnerRelease(oldState.channelId, memberId);
+              return;
+            }
+            if (newState.channelId) {
+              cancelOwnerRelease(oldState.channelId, memberId);
+              db.clearOwner(oldState.channelId, memberId);
+              return;
+            }
+            scheduleOwnerRelease(oldState.channelId, memberId, () => withChannelLock(oldState.channelId, () => {
+              const current = db.getTempChannel(oldState.channelId);
+              if (!current || String(current.owner_id) !== String(memberId)) return;
+              if (isChannelMember(guild, oldState.channelId, memberId)) return;
+              db.clearOwner(oldState.channelId, memberId);
+            }));
           });
           if (cleanupTempChannel) await cleanupTempChannel(guild, oldState.channelId);
           else await cleanupEmptyTempChannels(guild);
@@ -92,6 +117,7 @@ function createVoiceStateHandler({
               await latestMember.voice.setChannel(temp.id, "VoiceMaster: created temporary voice channel");
               memberMoved = true;
               if (typeof db.forceOwner === "function") db.forceOwner(temp.id, currentMember.id);
+              cancelOwnerRelease(temp.id, currentMember.id);
               return { temp, ownerId: currentMember.id };
             } finally {
               categoryReservation.release(memberMoved);

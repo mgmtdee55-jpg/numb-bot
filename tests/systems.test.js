@@ -558,7 +558,7 @@ test("showallcommands pages one category at a time", async () => {
   const names = [...new Set(pages.map((page) => page.name))];
   assert.deepEqual(names, [
     "Moderation", "Info", "Channels", "Logging", "Role Limits", "Voice",
-    "VC Ranks", "Vouch", "Staff", "Godmode", "Force", "Social", "Vanity", "Giveaways", "Bot"
+    "VC Ranks", "Vouch", "Staff", "Godmode", "Force", "Social", "Vanity", "Protection", "Giveaways", "Bot"
   ]);
   const text = pages.map((page) => page.description).join("\n");
   for (const command of ["-ban", "-pban", "-antinuke vouch limit view", "-role limit set", "-nuke", "-ceo add", "-showallcommands", "-instagram", "-giveaways start", "-embedcreate", "-modlogreset", "-voiceshield", "-snipe", "-clearsnipe", "-modstats", "-viewstats", "-jail", "-vc edit"]) {

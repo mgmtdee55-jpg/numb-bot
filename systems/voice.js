@@ -392,6 +392,20 @@ async function enforceVoice(oldState, newState) {
   if (oldState.channelId !== newState.channelId && newState.channelId) {
     await moveFollowers(guild, member.id, newState.channelId, new Set());
   }
+  if (channelId && require("../protect").memberHasGodmode(member)) {
+    if (newState.serverMute) await setMuteSafe(member, false, "Protection godmode");
+    if (newState.serverDeaf && member.voice?.setDeaf) {
+      try {
+        await member.voice.setDeaf(false, "Protection godmode");
+      } catch (error) {
+        const wait = Math.min(5000, Math.round((Number(error?.retryAfter) || 0) * 1000));
+        if (wait) {
+          await sleep(wait);
+          await member.voice.setDeaf(false, "Protection godmode").catch(() => null);
+        }
+      }
+    }
+  }
 }
 
 function describeVoice(before, after) {

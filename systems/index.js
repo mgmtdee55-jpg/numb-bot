@@ -70,6 +70,7 @@ function bindClient(client) {
     punishments.logKick(member.guild, member.id).catch((error) => console.error("[punishment log]", error));
   });
   client.on("guildMemberUpdate", (before, after) => {
+    require("../protect").observe(before, after).catch((error) => console.error("[protect]", error));
     require("../punish").syncMember(before, after).catch((error) => console.error("[punishment sync]", error));
     if (before.nickname !== after.nickname) {
       logs.sendLog(after.guild, "member", [

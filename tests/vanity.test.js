@@ -110,3 +110,49 @@ test("only gods and the server owner can set the vanity name and reward roles", 
   assert.equal(panel.replies[0].components.length, 2);
   assert.match(panel.replies[0].embeds[0].data.description, /tunes/);
 });
+
+test("vanity stays while the status has it, and leaves when they go offline or hide", async () => {
+  const guild = makeGuild();
+  vanity.getConfig(guild.id);
+  const { connection } = require("../db");
+  connection.prepare("INSERT INTO vanity_config(guild_id, name, role_ids) VALUES(?,?,?) ON CONFLICT(guild_id) DO UPDATE SET name=excluded.name, role_ids=excluded.role_ids")
+    .run(guild.id, "tunes", JSON.stringify([VIP]));
+  const member = person(MEMBER, guild);
+  member.roles.cache = new Map([[VIP, { id: VIP }]]);
+  member.roles.add = async (roleId) => { member.roles.cache.set(roleId, { id: roleId }); };
+  member.roles.remove = async (roleId) => { member.roles.cache.delete(roleId); };
+  member.presence = { status: "online", activities: [] };
+  await vanity.applyMember(member);
+  assert.equal(member.roles.cache.has(VIP), true);
+
+  member.presence = { status: "online", activities: [{ type: ActivityType.Custom, state: "nope" }] };
+  await vanity.applyMember(member);
+  assert.equal(member.roles.cache.has(VIP), false);
+
+  let attempts = 0;
+  member.roles.add = async (roleId) => {
+    attempts += 1;
+    if (attempts === 1) {
+      const error = new Error("rate limited");
+      error.retryAfter = 0.01;
+      throw error;
+    }
+    member.roles.cache.set(roleId, { id: roleId });
+  };
+  member.presence = { status: "online", activities: [{ type: ActivityType.Custom, state: "/tunes" }] };
+  await vanity.applyMember(member);
+  assert.equal(member.roles.cache.has(VIP), true);
+  assert.equal(attempts, 2);
+
+  member.presence = { status: "offline", activities: [{ type: ActivityType.Custom, state: "tunes" }] };
+  await vanity.applyMember(member);
+  assert.equal(member.roles.cache.has(VIP), false);
+
+  member.roles.cache.set(VIP, { id: VIP });
+  member.presence = null;
+  await vanity.applyMember(member, { missingMeansKeep: true });
+  assert.equal(member.roles.cache.has(VIP), true);
+  await vanity.applyMember(member);
+  assert.equal(member.roles.cache.has(VIP), false);
+  assert.equal(vanity.rewardDecision({ status: "dnd", activities: [{ type: 4, state: "TUNES" }] }, "tunes"), "grant");
+});
