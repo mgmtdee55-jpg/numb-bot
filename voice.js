@@ -1,5 +1,6 @@
 const {
   ChannelType,
+  OverwriteType,
   PermissionFlagsBits,
   EmbedBuilder,
   ActionRowBuilder,
@@ -330,10 +331,20 @@ function releaseChannelForMove(channelId, { immediate = false } = {}) {
   timer.unref?.();
 }
 
+function guildBitrateCap(guild) {
+  try {
+    const max = Number(guild?.maximumBitrate);
+    if (Number.isFinite(max) && max > 0) return max;
+  } catch {
+    // Guild.features is missing until the guild payload has finished loading.
+  }
+  return 96000;
+}
+
 function clampBitrate(guild, bitrate) {
   const requested = Number(bitrate);
   const fallback = 64000;
-  const max = Number(guild?.maximumBitrate) > 0 ? Number(guild.maximumBitrate) : 96000;
+  const max = guildBitrateCap(guild);
   const chosen = Number.isFinite(requested) && requested > 0 ? requested : fallback;
   return Math.min(max, Math.max(8000, Math.round(chosen)));
 }
@@ -505,10 +516,12 @@ async function createTempChannelInCategory(guild, member, config, categoryId) {
     permissionOverwrites: [
       {
         id: everyoneRoleId(guild),
+        type: OverwriteType.Role,
         allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect]
       },
       {
         id: member.id,
+        type: OverwriteType.Member,
         allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect]
       }
     ],

@@ -11,7 +11,7 @@ function embedTitle(embed) {
 }
 
 const BetterSqlite3 = require("better-sqlite3");
-const { ChannelType, EmbedBuilder, MessageFlags, PermissionFlagsBits } = require("discord.js");
+const { ChannelType, Client, EmbedBuilder, GatewayIntentBits, MessageFlags, OverwriteType, PermissionFlagsBits } = require("discord.js");
 
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "spanter-vc-test-"));
 const databasePath = path.join(scratch, "vc.sqlite");
@@ -517,10 +517,12 @@ test("join to create leaves move members neutral and does not edit permissions a
   assert.deepEqual(created.createOptions.permissionOverwrites, [
     {
       id: guild.roles.everyone.id,
+      type: OverwriteType.Role,
       allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect]
     },
     {
       id: member.id,
+      type: OverwriteType.Member,
       allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect]
     }
   ]);
@@ -2042,6 +2044,138 @@ test("a move rejected with 40032 retries while the member is still in join-to-cr
   assert.equal(creates, 1);
   assert.equal(moves, 2);
   assert.equal(member.voice.channelId, "temp-still-connected");
+});
+
+test("a real voice join creates and moves when Discord did not cache the member", async () => {
+  const guildId = "515151515151515151";
+  const userId = "525252525252525252";
+  const joinId = "535353535353535353";
+  const categoryId = "545454545454545454";
+  const createdId = "565656565656565656";
+  const client = new Client({
+    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates, GatewayIntentBits.GuildMembers]
+  });
+  client.user = client.users._add({ id: "575757575757575757", username: "numb", discriminator: "0" });
+  const guild = client.guilds._add({
+    id: guildId,
+    name: "numb",
+    owner_id: "111",
+    features: [],
+    roles: [{ id: guildId, name: "@everyone", permissions: "8" }],
+    afk_timeout: 60,
+    verification_level: 0,
+    default_message_notifications: 0,
+    explicit_content_filter: 0,
+    mfa_level: 0,
+    premium_tier: 0,
+    preferred_locale: "en-US",
+    nsfw_level: 0,
+    system_channel_flags: 0
+  });
+  guild.channels._add({
+    id: categoryId,
+    name: "Voice",
+    type: ChannelType.GuildCategory,
+    guild_id: guildId,
+    permission_overwrites: []
+  });
+  guild.channels._add({
+    id: joinId,
+    name: "Join to Create",
+    type: ChannelType.GuildVoice,
+    guild_id: guildId,
+    parent_id: categoryId,
+    bitrate: 64000,
+    user_limit: 0,
+    permission_overwrites: []
+  });
+  db.setConfig({
+    guild_id: guildId,
+    j2c_channel_id: joinId,
+    category_id: categoryId,
+    category_ids: JSON.stringify([categoryId]),
+    server_interface_channel_id: "disabled",
+    server_interface_message_id: null,
+    name_template: "{nickname}'s Channel",
+    user_limit: 0,
+    bitrate: 64000,
+    cleanup_seconds: 0,
+    server_interface_enabled: 0
+  });
+
+  const posts = [];
+  const moves = [];
+  let fetches = 0;
+  guild.members.fetch = async () => {
+    fetches += 1;
+    throw Object.assign(new Error("Missing Access"), { code: 50001, status: 403 });
+  };
+  client.rest.post = async (route, options) => {
+    posts.push(options.body);
+    return {
+      id: createdId,
+      type: ChannelType.GuildVoice,
+      guild_id: guildId,
+      name: options.body.name,
+      parent_id: options.body.parent_id,
+      bitrate: 64000,
+      user_limit: 0,
+      permission_overwrites: options.body.permission_overwrites || [],
+      position: 0
+    };
+  };
+  client.rest.patch = async (route, options) => {
+    moves.push({ route, body: options.body });
+    return {
+      user: { id: userId, username: "dee", discriminator: "0" },
+      roles: [],
+      joined_at: "2024-01-01T00:00:00.000Z",
+      deaf: false,
+      mute: false
+    };
+  };
+
+  const handler = createVoiceStateHandler({
+    db,
+    createTempChannel: voice.createTempChannel,
+    renderVoiceChannelInterface: async () => {},
+    cleanupEmptyTempChannels: async () => {},
+    cleanupTempChannel: async () => {}
+  });
+  let run;
+  client.on("voiceStateUpdate", (before, after) => {
+    run = handler(before, after);
+  });
+  client.actions.VoiceStateUpdate.handle({
+    guild_id: guildId,
+    channel_id: joinId,
+    user_id: userId,
+    session_id: "session",
+    deaf: false,
+    mute: false,
+    self_deaf: false,
+    self_mute: false,
+    self_video: false,
+    suppress: false,
+    member: {
+      user: { id: userId, username: "dee", discriminator: "0", global_name: "Dee" },
+      roles: [],
+      deaf: false,
+      mute: false
+    }
+  });
+
+  assert.equal(guild.members.cache.has(userId), false);
+  await run;
+
+  assert.equal(fetches, 1);
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].parent_id, categoryId);
+  assert.equal(moves.length, 1);
+  assert.equal(moves[0].body.channel_id, createdId);
+  assert.equal(db.getTempChannel(createdId)?.owner_id, userId);
+  assert.equal(guild.channels.cache.get(categoryId)?.type, ChannelType.GuildCategory);
+  assert.equal(guild.channels.cache.get(joinId)?.id, joinId);
 });
 
 test("join to create replaces a missing category and keeps the new call until the member is moved", async () => {

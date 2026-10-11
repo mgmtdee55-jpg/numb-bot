@@ -161,13 +161,28 @@ function createVoiceStateHandler({
   const pendingCreates = new Map();
   const pacer = createGuildPacer(pace);
 
-  function inJoinChannel(guild, member, channelId) {
-    const userId = member?.id;
-    const state = guild?.voiceStates?.cache?.get?.(userId) || guild?.voiceStates?.cache?.get?.(String(userId));
+  function voiceStateFor(guild, userId) {
+    return guild?.voiceStates?.cache?.get?.(userId) || guild?.voiceStates?.cache?.get?.(String(userId)) || null;
+  }
+
+  function stillInJoin(guild, userId, channelId) {
+    const state = voiceStateFor(guild, userId);
     const fromState = state?.channelId || state?.channel?.id || null;
     if (fromState != null) return sameId(fromState, channelId);
+    const member = guild?.members?.cache?.get?.(userId) || guild?.members?.cache?.get?.(String(userId));
     const current = member?.voice?.channelId || member?.voice?.channel?.id || null;
     return sameId(current, channelId);
+  }
+
+  function personForChannel(guild, userId, fallback) {
+    if (fallback?.id && (fallback.user || fallback.displayName || canMove(fallback))) return fallback;
+    const user = guild.client?.users?.cache?.get?.(userId) || guild.client?.users?.cache?.get?.(String(userId));
+    const name = user?.globalName || user?.username || "Voice";
+    return {
+      id: String(userId),
+      displayName: name,
+      user: { id: String(userId), username: user?.username || "voice", bot: !!user?.bot }
+    };
   }
 
   async function memberForJoin(guild, userId, fallback) {
@@ -179,10 +194,10 @@ function createVoiceStateHandler({
       return await guild.members.fetch(userId);
     } catch (error) {
       if (error?.code === 10007) return null;
-      if (!isRateLimitError(error)) throw error;
+      if (!isRateLimitError(error)) return null;
       await pace.sleep(pacer.penalize(guild.id, error));
       return guild.members.fetch(userId).catch((retryError) => {
-        if (retryError?.code === 10007) return null;
+        if (retryError?.code === 10007 || !isRateLimitError(retryError)) return null;
         throw retryError;
       });
     }
@@ -215,7 +230,7 @@ function createVoiceStateHandler({
     const states = guild.voiceStates?.cache;
     if (typeof states?.values === "function") {
       for (const state of states.values()) {
-        if (!state || state.channelId !== channelId) continue;
+        if (!state || !sameId(state.channelId, channelId)) continue;
         add(state.member, state.id);
       }
     }
@@ -254,28 +269,32 @@ function createVoiceStateHandler({
   async function openCall(guild, config, userId, box) {
     return pacer.schedule(guild.id, async () => {
       const cached = guild.members?.cache?.get?.(userId) || guild.members?.cache?.get?.(String(userId));
-      const member = (canMove(cached) ? cached : null) || (canMove(box.member) ? box.member : null);
-      if (!member || member.user?.bot) return null;
-      if (box.channel && sameId(member.voice?.channelId, box.channel.id)) return box.channel;
-      if (!inJoinChannel(guild, member, config.j2c_channel_id)) throw leftJoinChannel();
+      const member = (canMove(cached) ? cached : null) || personForChannel(guild, userId, box.member);
+      if (member.user?.bot) return null;
+      const state = voiceStateFor(guild, userId);
+      if (box.channel && sameId(state?.channelId || member.voice?.channelId, box.channel.id)) return box.channel;
+      if (!stillInJoin(guild, userId, config.j2c_channel_id)) throw leftJoinChannel();
       let reservation = null;
       let moved = false;
       try {
         if (!box.channel) {
           reservation = reserveTempCategory(guild, config, member.id);
           await pacer.acquire(guild.id, "create");
-          const fresh = (canMove(guild.members?.cache?.get?.(userId)) ? guild.members.cache.get(userId) : null) || member;
-          if (!inJoinChannel(guild, fresh, config.j2c_channel_id)) throw leftJoinChannel();
+          const freshCached = guild.members?.cache?.get?.(userId);
+          const fresh = (canMove(freshCached) ? freshCached : null) || member;
+          if (!stillInJoin(guild, userId, config.j2c_channel_id)) throw leftJoinChannel();
           box.channel = await createTempChannel(guild, fresh, {
             ...config,
             category_id: reservation.categoryId
           });
         }
         await pacer.acquire(guild.id, "move");
-        const latestCached = guild.members?.cache?.get?.(userId);
-        const latest = (canMove(latestCached) ? latestCached : null) || member;
-        if (!inJoinChannel(guild, latest, config.j2c_channel_id)) throw leftJoinChannel();
-        await latest.voice.setChannel(box.channel.id, "VoiceMaster: created temporary voice channel");
+        if (!stillInJoin(guild, userId, config.j2c_channel_id)) throw leftJoinChannel();
+        const mover = voiceStateFor(guild, userId);
+        const reason = "VoiceMaster: created temporary voice channel";
+        if (typeof mover?.setChannel === "function") await mover.setChannel(box.channel.id, reason);
+        else if (typeof member.voice?.setChannel === "function") await member.voice.setChannel(box.channel.id, reason);
+        else await guild.members.edit(userId, { channel: box.channel.id, reason });
         moved = true;
         return box.channel;
       } catch (error) {
@@ -293,26 +312,26 @@ function createVoiceStateHandler({
     while (true) {
       try {
         const member = await memberForJoin(guild, userId, box.member);
-        box.member = member || box.member;
-        if (!member || member.user?.bot) {
+        if (member?.user?.bot) {
           if (box.channel) await cleanupCreated(guild, box.channel.id);
           return null;
         }
-        if (box.channel && sameId(member.voice?.channelId, box.channel.id)) {
+        const actor = member || personForChannel(guild, userId, box.member);
+        box.member = actor;
+        if (box.channel && sameId(voiceStateFor(guild, userId)?.channelId || actor.voice?.channelId, box.channel.id)) {
           releaseChannelForMove(box.channel.id);
-          finishOwnership(box.channel, member.id);
-          await renderInterface(box.channel, member.id);
-          return { temp: box.channel, ownerId: member.id };
+          finishOwnership(box.channel, actor.id);
+          await renderInterface(box.channel, actor.id);
+          return { temp: box.channel, ownerId: actor.id };
         }
-        if (!inJoinChannel(guild, member, config.j2c_channel_id)) {
+        if (!stillInJoin(guild, userId, config.j2c_channel_id)) {
           if (box.channel) await cleanupCreated(guild, box.channel.id);
           return null;
         }
         const channel = await withChannelLock(`j2c-user:${guild.id}:${userId}`, () => openCall(guild, config, userId, box));
         if (!channel) {
           streak += 1;
-          const latest = guild.members?.cache?.get?.(userId) || box.member;
-          if (!inJoinChannel(guild, latest, config.j2c_channel_id)) {
+          if (!stillInJoin(guild, userId, config.j2c_channel_id)) {
             if (box.channel) await cleanupCreated(guild, box.channel.id);
             return null;
           }
@@ -320,9 +339,9 @@ function createVoiceStateHandler({
           continue;
         }
         releaseChannelForMove(channel.id);
-        finishOwnership(channel, member.id);
-        await renderInterface(channel, member.id);
-        return { temp: channel, ownerId: member.id };
+        finishOwnership(channel, actor.id);
+        await renderInterface(channel, actor.id);
+        return { temp: channel, ownerId: actor.id };
       } catch (error) {
         if (leftVoice(error)) {
           if (box.channel) await cleanupCreated(guild, box.channel.id);
@@ -334,8 +353,7 @@ function createVoiceStateHandler({
           await cleanupCreated(guild, box.channel.id);
           box.channel = null;
         }
-        const latest = guild.members?.cache?.get?.(userId) || box.member;
-        if (!inJoinChannel(guild, latest, config.j2c_channel_id)) {
+        if (!stillInJoin(guild, userId, config.j2c_channel_id)) {
           if (box.channel) await cleanupCreated(guild, box.channel.id);
           return null;
         }
