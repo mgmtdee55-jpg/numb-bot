@@ -1958,6 +1958,156 @@ test("someone already waiting in join-to-create is moved without a new join even
   assert.equal(member.voice.channelId, "temp-waiting");
 });
 
+test("join recovery fetches a waiting member who is only an id on the voice state", async () => {
+  const guild = makeGuild("j2c-voice-state-stub-guild");
+  const member = makeMember(guild, "313131313131313131", { channelId: "j2c" });
+  guild.members.cache.delete(member.id);
+  guild.voiceStates.cache.set(member.id, { id: member.id, channelId: "j2c", member: null });
+  let fetched = 0;
+  guild.members.fetch = async (userId) => {
+    fetched += 1;
+    assert.equal(userId, member.id);
+    guild.members.cache.set(userId, member);
+    return member;
+  };
+  const handler = createVoiceStateHandler({
+    db: {
+      getConfig: () => ({ j2c_channel_id: "j2c", category_id: "category" }),
+      getTempChannel: () => null
+    },
+    createTempChannel: async () => ({ id: "temp-from-stub" }),
+    renderVoiceChannelInterface: async () => {},
+    cleanupEmptyTempChannels: async () => {}
+  });
+
+  await handler.recoverGuild(guild);
+
+  assert.equal(fetched, 1);
+  assert.equal(member.voice.channelId, "temp-from-stub");
+});
+
+test("join to create still opens a call when the member cache lags behind the voice state", async () => {
+  const guild = makeGuild("j2c-stale-member-voice-guild");
+  const member = makeMember(guild, "323232323232323232", { channelId: "old-call" });
+  guild.voiceStates.cache.set(member.id, { id: member.id, channelId: "j2c", member });
+  const handler = createVoiceStateHandler({
+    db: {
+      getConfig: () => ({ j2c_channel_id: "j2c", category_id: "category" }),
+      getTempChannel: () => null
+    },
+    createTempChannel: async () => ({ id: "temp-stale-voice" }),
+    renderVoiceChannelInterface: async () => {},
+    cleanupEmptyTempChannels: async () => {}
+  });
+
+  await handler(
+    { channelId: "old-call" },
+    { guild, id: member.id, member, channelId: "j2c" }
+  );
+
+  assert.equal(member.voice.channelId, "temp-stale-voice");
+});
+
+test("a move rejected with 40032 retries while the member is still in join-to-create", async () => {
+  const guild = makeGuild("j2c-still-connected-guild");
+  const clock = manualClock();
+  const member = makeMember(guild, "404040404040404040", { channelId: "j2c" });
+  guild.voiceStates.cache.set(member.id, { id: member.id, channelId: "j2c", member });
+  let moves = 0;
+  let creates = 0;
+  member.voice.setChannel = async (channelId) => {
+    moves += 1;
+    if (moves === 1) throw Object.assign(new Error("Target user is not connected to voice."), { code: 40032 });
+    member.voice.channelId = channelId;
+  };
+  const handler = createVoiceStateHandler({
+    db: {
+      getConfig: () => ({ j2c_channel_id: "j2c", category_id: "category" }),
+      getTempChannel: () => null
+    },
+    pace: clock.pace,
+    createTempChannel: async () => {
+      creates += 1;
+      return { id: "temp-still-connected" };
+    },
+    renderVoiceChannelInterface: async () => {},
+    cleanupEmptyTempChannels: async () => {}
+  });
+
+  await handler(
+    { channelId: null },
+    { guild, id: member.id, member, channelId: "j2c" }
+  );
+
+  assert.equal(creates, 1);
+  assert.equal(moves, 2);
+  assert.equal(member.voice.channelId, "temp-still-connected");
+});
+
+test("join to create replaces a missing category and keeps the new call until the member is moved", async () => {
+  const guild = makeGuild("j2c-missing-category-guild");
+  guild.roles.everyone = undefined;
+  const member = makeMember(guild, "414141414141414141");
+  db.setConfig({
+    guild_id: guild.id,
+    j2c_channel_id: "missing-category-j2c",
+    category_id: "deleted-category",
+    category_ids: JSON.stringify(["deleted-category"]),
+    server_interface_channel_id: "disabled",
+    server_interface_message_id: null,
+    name_template: "{nickname}'s Channel",
+    user_limit: 0,
+    bitrate: 64000,
+    cleanup_seconds: 0,
+    server_interface_enabled: 0
+  });
+
+  const created = await voice.createTempChannel(guild, member, db.getConfig(guild.id));
+  assert.equal(created.type, ChannelType.GuildVoice);
+  assert.equal(created.createOptions.permissionOverwrites[0].id, guild.id);
+  const category = guild.channels.cache.get(created.parentId);
+  assert.equal(category.type, ChannelType.GuildCategory);
+  assert.notEqual(category.id, "deleted-category");
+  assert.equal(db.getConfig(guild.id).category_id, category.id);
+  assert.equal(guild.channels.cache.get("deleted-category"), undefined);
+
+  await voice.cleanupEmptyTempChannels(guild);
+  assert.equal(created.deleted, false);
+  voice.releaseChannelForMove(created.id, { immediate: true });
+  await voice.cleanupEmptyTempChannels(guild);
+  assert.equal(created.deleted, true);
+  assert.equal(category.deleted, false);
+});
+
+test("join to create opens a new category when every saved category is full", async () => {
+  const guild = makeGuild("j2c-full-category-guild");
+  const category = makeCategory(guild);
+  const member = makeMember(guild, "424242424242424242");
+  for (let index = 0; index < voice.DISCORD_CATEGORY_CHANNEL_CAP; index += 1) {
+    const channel = makeVoiceChannel(guild, `full-${index}`);
+    channel.parentId = category.id;
+  }
+  db.setConfig({
+    guild_id: guild.id,
+    j2c_channel_id: "full-category-j2c",
+    category_id: category.id,
+    category_ids: JSON.stringify([category.id]),
+    server_interface_channel_id: "disabled",
+    server_interface_message_id: null,
+    name_template: "{nickname}'s Channel",
+    user_limit: 0,
+    bitrate: 64000,
+    cleanup_seconds: 0,
+    server_interface_enabled: 0
+  });
+
+  const created = await voice.createTempChannel(guild, member, db.getConfig(guild.id));
+  assert.equal(guild.channels.cache.get(category.id), category);
+  assert.equal(category.deleted, false);
+  assert.notEqual(created.parentId, category.id);
+  assert.equal(guild.channels.cache.get(created.parentId).type, ChannelType.GuildCategory);
+});
+
 test("join to create clamps bitrate and user limit to what Discord will accept", async () => {
   const guild = makeGuild("bitrate-clamp-guild");
   guild.maximumBitrate = 64000;

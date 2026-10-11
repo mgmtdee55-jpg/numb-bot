@@ -22,6 +22,7 @@ const DISCORD_CATEGORY_CHANNEL_CAP = 50;
 const CATEGORY_RESERVATION_TTL_MS = 10000;
 const OWNER_RELEASE_GRACE_MS = 5000;
 const pendingOwnerReleases = new Map();
+const channelsAwaitingMove = new Set();
 const VC_INTERFACE_ICONS = {
   lock: "1472443164995358872",
   unlock: "1472443249745723402",
@@ -306,8 +307,27 @@ function isRateLimitError(error) {
 
 function isCategoryLimitError(error) {
   if (isRateLimitError(error)) return false;
-  return [30013, 30030, 50035].includes(Number(error?.code))
-    || /maximum|full|category/i.test(String(error?.message || ""));
+  if (Number(error?.code) === 30013) return true;
+  return /maximum number of channels|channels in category/i.test(String(error?.message || ""));
+}
+
+function everyoneRoleId(guild) {
+  return guild.roles?.everyone?.id || guild.id;
+}
+
+function holdChannelForMove(channelId) {
+  if (channelId != null) channelsAwaitingMove.add(String(channelId));
+}
+
+function releaseChannelForMove(channelId, { immediate = false } = {}) {
+  if (channelId == null) return;
+  const key = String(channelId);
+  if (immediate) {
+    channelsAwaitingMove.delete(key);
+    return;
+  }
+  const timer = setTimeout(() => channelsAwaitingMove.delete(key), 20000);
+  timer.unref?.();
 }
 
 function clampBitrate(guild, bitrate) {
@@ -484,7 +504,7 @@ async function createTempChannelInCategory(guild, member, config, categoryId) {
     userLimit: clampUserLimit(config.user_limit),
     permissionOverwrites: [
       {
-        id: guild.roles.everyone.id,
+        id: everyoneRoleId(guild),
         allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect]
       },
       {
@@ -503,8 +523,10 @@ async function createTempChannelInCategory(guild, member, config, categoryId) {
       interface_message_id: null,
       created_at: Date.now()
     });
+    holdChannelForMove(channel.id);
     return channel;
   } catch (error) {
+    releaseChannelForMove(channel.id, { immediate: true });
     if (!channelHasOccupant(channel)) {
       await channel.delete("VoiceMaster: failed to finish temporary channel setup").catch((deleteError) => {
         console.error(`[temp channel rollback] ${channel.id}`, deleteError);
@@ -515,23 +537,71 @@ async function createTempChannelInCategory(guild, member, config, categoryId) {
   }
 }
 
-async function createTempChannel(guild, member, config) {
-  const preferred = config.category_id;
-  const categoryIds = [...new Set([preferred, ...configuredCategoryIds(config)].filter(Boolean))];
-  if (!categoryIds.length) throw new Error(`No temporary VC categories configured for guild ${guild.id}.`);
+async function resolveCategory(guild, categoryId) {
+  if (!categoryId) return null;
+  const cached = guild.channels?.cache?.get?.(categoryId) || guild.channels?.cache?.get?.(String(categoryId));
+  const candidate = cached || await guild.channels?.fetch?.(categoryId).catch((error) => {
+    if (Number(error?.code) === 10003) return null;
+    throw error;
+  });
+  if (!candidate || candidate.type !== ChannelType.GuildCategory) return null;
+  return candidate;
+}
 
+function rememberCategory(guild, config, categoryId) {
+  const saved = db.getConfig(guild.id);
+  if (!saved?.j2c_channel_id) return;
+  const ids = [categoryId, ...configuredCategoryIds(saved).filter((id) => String(id) !== String(categoryId))]
+    .slice(0, MAX_TEMP_CATEGORIES);
+  db.setConfig({
+    ...saved,
+    category_id: categoryId,
+    category_ids: JSON.stringify(ids)
+  });
+}
+
+async function createOverflowCategory(guild, config) {
+  const created = await guild.channels.create({
+    name: "Voice Channels",
+    type: ChannelType.GuildCategory,
+    reason: "VoiceMaster: join-to-create category"
+  });
+  rememberCategory(guild, config, created.id);
+  return created.id;
+}
+
+async function usableCategoryIds(guild, config) {
+  const ids = [...new Set([config.category_id, ...configuredCategoryIds(config)].filter(Boolean))];
+  const usable = [];
+  for (const categoryId of ids) {
+    const category = await resolveCategory(guild, categoryId);
+    if (!category) continue;
+    if (categoryChildCount(guild, category.id) >= DISCORD_CATEGORY_CHANNEL_CAP) continue;
+    usable.push(category.id);
+  }
+  if (usable.length) return usable;
+  return [await createOverflowCategory(guild, config)];
+}
+
+async function createTempChannel(guild, member, config) {
+  const categoryIds = await usableCategoryIds(guild, config);
   let lastError;
   for (const [index, categoryId] of categoryIds.entries()) {
     const isLast = index === categoryIds.length - 1;
-    if (!isLast && categoryChildCount(guild, categoryId) >= DISCORD_CATEGORY_CHANNEL_CAP) continue;
     try {
       return await createTempChannelInCategory(guild, member, config, categoryId);
     } catch (error) {
       lastError = error;
-      if (isRateLimitError(error) || !isCategoryLimitError(error) || isLast) throw error;
+      if (isRateLimitError(error)) throw error;
+      if (!isCategoryLimitError(error) || isLast) throw error;
     }
   }
-  throw lastError || new Error("All configured VoiceMaster categories are full.");
+  const extra = await createOverflowCategory(guild, config);
+  try {
+    return await createTempChannelInCategory(guild, member, config, extra);
+  } catch (error) {
+    throw error || lastError;
+  }
 }
 
 async function createServerInterface(guild, config, existingConfig = null, { deferExistingEdit = false } = {}) {
@@ -564,7 +634,7 @@ async function createServerInterface(guild, config, existingConfig = null, { def
         parent: config.category_id,
         topic: SERVER_INTERFACE_TOPIC,
         permissionOverwrites: [{
-          id: guild.roles.everyone.id,
+          id: everyoneRoleId(guild),
           allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory],
           deny: [PermissionFlagsBits.SendMessages]
         }],
@@ -575,7 +645,7 @@ async function createServerInterface(guild, config, existingConfig = null, { def
 
     try {
       if (!createdChannel) {
-        await channel.permissionOverwrites.edit(guild.roles.everyone, {
+        await channel.permissionOverwrites.edit(everyoneRoleId(guild), {
           ViewChannel: true,
           ReadMessageHistory: true,
           SendMessages: false
@@ -638,6 +708,7 @@ async function cleanupTempChannelUnlocked(guild, row, config = db.getConfig(guil
     row = db.getTempChannel(row.channel_id);
     if (!row) return;
     if (row.channel_id === config?.j2c_channel_id) return;
+    if (channelsAwaitingMove.has(String(row.channel_id))) return;
     let channel = guild.channels.cache.get(row.channel_id);
     if (!channel) {
       channel = await guild.channels.fetch(row.channel_id).catch((error) => {
@@ -771,6 +842,8 @@ module.exports = {
   panelRows,
   reserveTempCategory,
   isRateLimitError,
+  holdChannelForMove,
+  releaseChannelForMove,
   clampBitrate,
   clampUserLimit,
   isChannelMember,
