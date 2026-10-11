@@ -8,6 +8,7 @@ const { logThrottledError } = require("./log-throttle");
 const moderation = require("./moderation");
 const vouch = require("./vouch");
 const { card } = require("./feedback");
+const { replyUsage } = require("./usage");
 const cooldowns = require("./systems/cooldowns");
 
 function embed(title, description, guild) {
@@ -165,24 +166,17 @@ async function handleCommand(message, client, prefix = "-", options = {}) {
       return require("./vc-config").show(message);
     }
     if (sub === "limit") {
+      if (args[2] == null || String(args[2]).trim() === "") return replyUsage(message, "vclimit");
       return controls.runLimitTextAction(message, args[2]);
     }
     if (sub === "transfer") {
       const target = await resolveMember(message, args[2]);
-      if (!target) {
-        return message.reply({
-          embeds: [embed("Missing User", "Mention the member you want to give this channel to.")]
-        });
-      }
+      if (!target) return replyUsage(message, "vctransfer");
       return controls.transferOwnership(message, target);
     }
     if (["kick", "ban", "unban", "permit", "reject"].includes(sub)) {
       const target = await resolveMember(message, args[2]);
-      if (!target) {
-        return message.reply({
-          embeds: [embed("Missing User", "Mention a server member or provide their user ID.")]
-        });
-      }
+      if (!target) return replyUsage(message, `vc${sub}`);
       return controls.runTargetTextAction(message, sub, target);
     }
     if (sub === "help") {
@@ -228,11 +222,7 @@ async function handleCommand(message, client, prefix = "-", options = {}) {
   ]);
   if (legacyTargetActions.has(command)) {
     const target = await resolveMember(message, args[1]);
-    if (!target) {
-      return message.reply({
-        embeds: [embed("Missing User", "Mention a server member or provide their user ID.")]
-      });
-    }
+    if (!target) return replyUsage(message, legacyTargetActions.get(command));
     return controls.runTargetTextAction(message, legacyTargetActions.get(command), target);
   }
 }

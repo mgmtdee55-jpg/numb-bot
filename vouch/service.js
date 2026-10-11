@@ -4,6 +4,7 @@ const logging = require("./logging");
 const roles = require("./roles");
 const { resolveMember, resolveUserId, resolveRole, resolveChannel, resolveOsTarget } = require("./resolve");
 const { reply } = require("./ui");
+const { replyUsage } = require("../usage");
 const {
   cleanReason,
   discordTime,
@@ -599,7 +600,7 @@ async function stripGiver(message, userArg) {
 async function setRoleLimit(message, tokens) {
   if (!authority.isOsOrOwner(message.member)) return deny(message, "Only OS and the server owner can limit roles.");
   if (!tokens?.length || tokens.length < 2) {
-    return reply(message, "Usage", "`-limit @role <number>`");
+    return replyUsage(message, "limit");
   }
   const rawNumber = tokens[tokens.length - 1];
   const max = parseLimit(rawNumber, MAX_ROLE_LIMIT);

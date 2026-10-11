@@ -3,6 +3,7 @@ const roles = require("../vouch/roles");
 const { MAX_ALLOWANCE, MAX_ROLE_LIMIT } = require("../vouch/constants");
 const { card } = require("../feedback");
 const { reply } = require("../vouch/ui");
+const { replyUsage } = require("../usage");
 const vouchLogging = require("../vouch/logging");
 const store = require("./store");
 const access = require("./access");
@@ -100,7 +101,7 @@ async function assignVoiceRank(message, member, rank) {
     return deny(message, "Only Gods and the server owner can assign VC ranks.");
   }
   if (!member || !rank) {
-    return reply(message, "Usage", "`-vc rank assign @user <plus|premium|premium plus>`");
+    return replyUsage(message, "vcrankassign");
   }
   if (member.user?.bot) return reply(message, "Invalid Target", "Bots cannot hold a VC rank.");
   const roleId = store.roleIdForRank(message.guild.id, rank.key);
@@ -276,7 +277,7 @@ async function handleVouchLimit(message, args) {
   if (scope === "user") {
     const member = await resolveMember(message, args[4]);
     const max = wholeNumber(args[5], MAX_ALLOWANCE);
-    if (!member || max == null) return reply(message, "Usage", "`-antinuke vouch limit user @user <#>`");
+    if (!member || max == null) return replyUsage(message, "vouchlimituser");
     vouchStore.setAllowance(message.guild.id, member.id, max, message.author.id);
     await audit(message, "limit_set", member.id, `User vouch cap set to ${max}`);
     return reply(message, "Vouch Limit Updated", `<@${member.id}> can give **${max}** active vouches.`);
@@ -495,9 +496,7 @@ async function handleGrant(message, args, prefix, removing) {
     return reply(message, "Unknown Command", `That command cannot be granted on its own.\n\n${access.grantHelp(prefix)}`);
   }
   const member = await resolveMember(message, args[2]);
-  if (!member) {
-    return reply(message, "Missing User", `\`${prefix}${removing ? "revoke" : "grant"} ${command} @user\``);
-  }
+  if (!member) return replyUsage(message, removing ? "revoke" : "grant");
   if (member.user?.bot) return reply(message, "Invalid Target", "Bots cannot hold a command grant.");
   if (member.id === message.guild.ownerId) {
     return reply(message, "Server Owner", "The server owner already has every command.");

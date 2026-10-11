@@ -14,6 +14,7 @@ const {
 } = require("./fake-permissions");
 const access = require("./systems/access");
 const { card } = require("./feedback");
+const { replyUsage } = require("./usage");
 
 const ACCENT = 0x2b2d31;
 const tempbanTimers = new Map();
@@ -439,8 +440,29 @@ async function handleFakePermissions(message, args, prefix) {
   return reply(message, "Fake Permissions", fakePermissionsHelp(prefix));
 }
 
+function parseBanTail(parts) {
+  let silent = false;
+  let days = null;
+  const reason = [];
+  for (const part of parts) {
+    if (/^\$silent$/i.test(part)) {
+      silent = true;
+      continue;
+    }
+    const match = /^\$(\d+)$/.exec(part);
+    if (match) {
+      const value = Number(match[1]);
+      if (!Number.isInteger(value) || value < 0 || value > 7 || days != null) return { invalid: true };
+      days = value;
+      continue;
+    }
+    reason.push(part);
+  }
+  return { silent, days, reason: reason.join(" ").trim(), invalid: false };
+}
+
 async function banCheck(message, userId) {
-  if (!userId) return reply(message, "Usage", "`-banned <user>` or `-ban check <user>`");
+  if (!userId) return replyUsage(message, "banned");
   const discordBan = await message.guild.bans.fetch(userId).catch(() => null);
   const foreverban = db.getForeverban(message.guild.id, userId);
   const hardban = db.getHardban(message.guild.id, userId);
@@ -476,7 +498,11 @@ async function handleBan(message, args, prefix) {
     if (!canUseBanCommands(message.member)) return missingPerm(message, "ban_members");
   }
 
-  if (sub === "check") return banCheck(message, await resolveUserId(message, args[2]));
+  if (sub === "check") {
+    const userId = await resolveUserId(message, args[2]);
+    if (!userId) return replyUsage(message, "bancheck");
+    return banCheck(message, userId);
+  }
   if (sub === "list") {
     const bans = await message.guild.bans.fetch().catch(() => new Map());
     const lines = [...bans.values()].map((ban) => `• ${ban.user?.tag || ban.user?.username || ban.user?.id} (\`${ban.user?.id}\`) — ${ban.reason || "No reason"}`);
@@ -484,9 +510,7 @@ async function handleBan(message, args, prefix) {
   }
   if (sub === "purge") {
     const days = Number(args[2]);
-    if (!Number.isInteger(days) || days < 0 || days > 7) {
-      return reply(message, "Usage", `\`${prefix}ban purge <0-7>\`\nCurrent default: **${db.getBanPurgeDays(message.guild.id)}** day(s).`);
-    }
+    if (!Number.isInteger(days) || days < 0 || days > 7) return replyUsage(message, "banpurge");
     db.setBanPurgeDays(message.guild.id, days);
     return reply(message, "Ban Purge Updated", `Bans now delete **${days}** day(s) of message history by default.`);
   }
@@ -495,31 +519,13 @@ async function handleBan(message, args, prefix) {
     const lines = rows.map((row) => `• <@${row.user_id}> — **${row.action}** — ${row.reason || "No reason"} ${formatTime(row.created_at)}`);
     return listBans(message, "Recent Bans", lines);
   }
-  if (!args[1]) {
-    return reply(
-      message,
-      "Ban Commands",
-      [
-        `\`${prefix}ban <user> [reason]\``,
-        `\`${prefix}ban check <user>\``,
-        `\`${prefix}ban list\``,
-        `\`${prefix}ban purge <0-7>\``,
-        `\`${prefix}ban recent\``,
-        `\`${prefix}banned <user>\``,
-        `\`${prefix}softban <user> [reason]\``,
-        `\`${prefix}tempban <user> <duration> [reason]\``,
-        `\`${prefix}unban <user>\``,
-        `\`${prefix}unbanall\``,
-        `\`${prefix}hardban <user> [reason]\` — requires \`administrator\``,
-        `\`${prefix}fb <user> [reason]\` / \`${prefix}foreverban\` — owner-tier ban`,
-        `\`${prefix}fub <user>\` / \`${prefix}foreverunban\` — only way to lift a foreverban`
-      ].join("\n")
-    );
-  }
+  if (!args[1]) return replyUsage(message, "ban");
 
   if (!canUseBanCommands(message.member)) return missingPerm(message, "ban_members");
+  const parsed = parseBanTail(args.slice(2));
+  if (parsed.invalid) return replyUsage(message, "ban");
   const userId = await resolveUserId(message, args[1]);
-  if (!userId) return reply(message, "Usage", `\`${prefix}ban <user> [reason]\``);
+  if (!userId) return replyUsage(message, "ban");
   const target = await message.guild.members.fetch(userId).catch(() => null);
   if (target && !canModerate(message.member, target)) {
     return reply(message, "Unable to Ban", "You cannot ban that member.");
@@ -527,11 +533,19 @@ async function handleBan(message, args, prefix) {
   if (!botCanBan(message.guild)) {
     return reply(message, "Bot Missing Permission", "I need the Discord **Ban Members** permission to do that.");
   }
-  const reason = args.slice(2).join(" ").trim() || "No reason provided";
+  const reason = parsed.reason || "No reason provided";
   try {
-    await applyBan(message.guild, userId, { reason, moderatorId: message.author.id });
+    await applyBan(message.guild, userId, {
+      reason,
+      purgeDays: parsed.days,
+      moderatorId: message.author.id
+    });
   } catch (error) {
     return reply(message, "Unable to Ban", error.message || "Discord rejected that ban.");
+  }
+  if (parsed.silent) {
+    if (typeof message.delete === "function") await message.delete().catch(() => null);
+    return;
   }
   return reply(message, "Member Banned", `<@${userId}> was banned. Reason: ${reason}`);
 }
@@ -558,7 +572,7 @@ async function handleHardban(message, args, prefix) {
     return reply(message, "Hardbans Reset", `Cleared **${rows.length}** hardban(s) and unbanned **${unbanned}**.`);
   }
   const userId = await resolveUserId(message, args[1]);
-  if (!userId) return reply(message, "Usage", `\`${prefix}hardban <user> [reason]\``);
+  if (!userId) return replyUsage(message, "hardban");
   const target = await message.guild.members.fetch(userId).catch(() => null);
   if (target && !canModerate(message.member, target)) {
     return reply(message, "Unable to Hardban", "You cannot hardban that member.");
@@ -586,7 +600,7 @@ async function handleHardban(message, args, prefix) {
 async function handleSoftban(message, args, prefix) {
   if (!canUseBanCommands(message.member)) return missingPerm(message, "ban_members");
   const userId = await resolveUserId(message, args[1]);
-  if (!userId) return reply(message, "Usage", `\`${prefix}softban <user> [reason]\``);
+  if (!userId) return replyUsage(message, "softban");
   const target = await message.guild.members.fetch(userId).catch(() => null);
   if (target && !canModerate(message.member, target)) {
     return reply(message, "Unable to Softban", "You cannot softban that member.");
@@ -611,9 +625,7 @@ async function handleTempban(message, args, prefix) {
   if (!canUseBanCommands(message.member)) return missingPerm(message, "ban_members");
   const userId = await resolveUserId(message, args[1]);
   const duration = parseDuration(args[2]);
-  if (!userId || !duration) {
-    return reply(message, "Usage", `\`${prefix}tempban <user> <duration> [reason]\`\nDuration examples: \`10m\`, \`2h\`, \`1d\``);
-  }
+  if (!userId || !duration) return replyUsage(message, "tempban");
   const target = await message.guild.members.fetch(userId).catch(() => null);
   if (target && !canModerate(message.member, target)) {
     return reply(message, "Unable to Tempban", "You cannot tempban that member.");
@@ -644,7 +656,7 @@ async function handleTempban(message, args, prefix) {
 async function handleUnban(message, args, prefix) {
   if (!canUseBanCommands(message.member)) return missingPerm(message, "ban_members");
   const userId = await resolveUserId(message, args[1]);
-  if (!userId) return reply(message, "Usage", `\`${prefix}unban <id or username>\``);
+  if (!userId) return replyUsage(message, "unban");
   if (db.isForeverbanned(message.guild.id, userId)) {
     return reply(message, "Foreverbanned", "That user has a **foreverban**. `-unban` cannot lift it. Only `-fub` / `-foreverunban` can.");
   }
@@ -731,14 +743,10 @@ async function handleUnbanAll(message, args) {
 async function handleRole(message, args, prefix) {
   if (!canManageRoles(message.member)) return missingPerm(message, "manage_roles");
   const sub = (args[1] || "").toLowerCase();
-  if (sub !== "add") {
-    return reply(message, "Role Commands", `\`${prefix}role add <member> <role>\``);
-  }
+  if (sub !== "add" || !args[2] || !args[3]) return replyUsage(message, "role");
   const userId = await resolveUserId(message, args[2]);
   const role = await resolveRole(message, args[3]);
-  if (!userId || !role) {
-    return reply(message, "Usage", `\`${prefix}role add <member> <role>\`\n\nExample: \`${prefix}role add @user @Mods\``);
-  }
+  if (!userId || !role) return replyUsage(message, "role");
   const target = await message.guild.members.fetch(userId).catch(() => null);
   if (!target) return reply(message, "Unknown Member", "That member is not in this server.");
   if (!botCanManageRoles(message.guild)) {
@@ -768,11 +776,8 @@ async function handleForeverban(message, args, prefix) {
   }
   const userId = await resolveUserId(message, args[1]);
   if (!userId) {
-    return reply(
-      message,
-      "Foreverban",
-      `\`${prefix}fb <user> [reason]\`\n\`${prefix}fb list\`\nThis is the highest ban. \`-unban\` and \`-unbanall\` cannot lift it. Only \`${prefix}fub\` can.`
-    );
+    const invoked = String(args[0] || "").toLowerCase();
+    return replyUsage(message, invoked.endsWith("fb") ? "fb" : "foreverban");
   }
   if (userId === message.guild.ownerId) {
     return reply(message, "Unable to Foreverban", "The server owner cannot be foreverbanned.");
@@ -805,7 +810,10 @@ async function handleForeverban(message, args, prefix) {
 async function handleForeverunban(message, args, prefix) {
   if (!canForeverBan(message.member)) return missingPerm(message, "foreverban_members");
   const userId = await resolveUserId(message, args[1]);
-  if (!userId) return reply(message, "Usage", `\`${prefix}fub <user>\` / \`${prefix}foreverunban <user>\``);
+  if (!userId) {
+    const invoked = String(args[0] || "").toLowerCase();
+    return replyUsage(message, invoked.endsWith("fub") ? "fub" : "foreverunban");
+  }
   if (!db.isForeverbanned(message.guild.id, userId)) {
     return reply(message, "Not Foreverbanned", "That user does not have a foreverban.");
   }
@@ -861,7 +869,12 @@ async function handleCommand(message, args, prefix) {
       await missingPerm(message, "ban_members");
       return true;
     }
-    await banCheck(message, await resolveUserId(message, args[1]));
+    const userId = await resolveUserId(message, args[1]);
+    if (!userId) {
+      await replyUsage(message, "banned");
+      return true;
+    }
+    await banCheck(message, userId);
     return true;
   }
   if (command === `${prefix}hardban`.toLowerCase()) {

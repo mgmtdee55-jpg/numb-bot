@@ -1,6 +1,7 @@
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require("discord.js");
 const { ACCENT } = require("./vouch/constants");
 const { reply } = require("./vouch/ui");
+const { replyUsage } = require("./usage");
 const cooldowns = require("./systems/cooldowns");
 
 const CACHE_MS = 120_000;
@@ -411,7 +412,7 @@ async function loadRoblox(username) {
 async function instagram(message, raw) {
   const username = cleanInstagram(raw);
   if (!/^[A-Za-z0-9._]{1,30}$/.test(username)) {
-    return reply(message, "Usage", "`-instagram <username>`\nAliases: `-ig` and `-insta`.");
+    return replyUsage(message, "instagram");
   }
   return guarded(message, "instagram", "instagram", username, loadInstagram, instagramEmbed);
 }
@@ -419,7 +420,7 @@ async function instagram(message, raw) {
 async function tiktok(message, raw) {
   const username = cleanTikTok(raw);
   if (!/^[A-Za-z0-9._]{2,24}$/.test(username)) {
-    return reply(message, "Usage", "`-tiktok <username>`");
+    return replyUsage(message, "tiktok");
   }
   return guarded(message, "tiktok", "tiktok", username, loadTikTok, tiktokEmbed);
 }
@@ -427,7 +428,7 @@ async function tiktok(message, raw) {
 async function roblox(message, raw) {
   const username = cleanRoblox(raw);
   if (!/^[A-Za-z0-9_]{2,20}$/.test(username)) {
-    return reply(message, "Usage", "`-roblox <username>`");
+    return replyUsage(message, "roblox");
   }
   return guarded(message, "roblox", "roblox", username, loadRoblox, robloxEmbed);
 }

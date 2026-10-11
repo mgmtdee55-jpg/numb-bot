@@ -5,6 +5,7 @@ const roles = require("./vouch/roles");
 const protection = require("./vouch/protection");
 const { ACCENT } = require("./vouch/constants");
 const { reply } = require("./vouch/ui");
+const { replyUsage } = require("./usage");
 
 connection.exec(`
 CREATE TABLE IF NOT EXISTS giveaways (
@@ -210,7 +211,7 @@ async function start(message, args, prefix) {
   const winners = Number(args[index + 1]);
   const prize = args.slice(index + 2).join(" ").trim();
   if (!duration || !Number.isInteger(winners) || winners < 1 || winners > 20 || !prize) {
-    return reply(message, "Usage", usage(prefix));
+    return replyUsage(message, "giveaways");
   }
   const endsAt = Date.now() + duration.ms;
   const created = statements.insert.run(
@@ -285,7 +286,7 @@ async function setHost(message, args, prefix) {
   }
   const role = await resolveRole(message, args.join(" "));
   if (!role || role.id === message.guild.id) {
-    return reply(message, "Usage", `\`${prefix}set gw host @role\`\n\`${prefix}set gw host add @user\`\n\`${prefix}set gw host remove @user\``);
+    return replyUsage(message, "gwhost");
   }
   statements.setRole.run(message.guild.id, role.id);
   return reply(message, "Giveaway Host Role Set", `<@&${role.id}> is the giveaway host role. Only people granted with the bot keep it.`);
@@ -311,7 +312,7 @@ async function handleCommand(message, args, prefix) {
   const sub = (args[0] || "").toLowerCase();
   if (sub === "start") return start(message, args.slice(1), prefix);
   if (sub === "reroll") return reroll(message, args.slice(1), prefix);
-  return reply(message, "Giveaways", usage(prefix));
+  return replyUsage(message, "giveaways");
 }
 
 async function handleButton(interaction) {

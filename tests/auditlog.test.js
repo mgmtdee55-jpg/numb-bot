@@ -286,7 +286,8 @@ test("auditlog is limited to gods and view audit log, and the bot must be able t
 
   const usage = message(makeGuild([]), "-auditlog");
   await handleCommand(usage, null, "-");
-  assert.match(usage.replies[0].embeds[0].data.description, /Missing User/);
+  assert.match(usage.replies[0].embeds[0].data.description, /\*\*Command:\*\* auditlog/);
+  assert.match(usage.replies[0].embeds[0].data.description, /auditlog @user/);
 
   const stranger = await press(allowed, "Timeouts", OWNER);
   assert.match(stranger.repliedPayload.embeds[0].data.description, /Not Yours/);

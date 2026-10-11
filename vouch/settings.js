@@ -2,6 +2,7 @@ const store = require("./store");
 const access = require("../systems/access");
 const logging = require("./logging");
 const { reply } = require("./ui");
+const { replyUsage } = require("../usage");
 const { BUILTIN_COMMANDS } = require("./constants");
 
 function normalizeCommand(text, prefix) {
@@ -40,7 +41,7 @@ async function aliasCommand(message, args, prefix) {
   }
   if (action === "remove") {
     const shortcut = (args[2] || "").toLowerCase();
-    if (!shortcut) return reply(message, "Usage", `\`${prefix}alias remove <shortcut>\``);
+    if (!shortcut) return replyUsage(message, "aliasremove");
     if (!store.removeAlias(message.guild.id, shortcut)) return reply(message, "Missing Alias", "That shortcut is not saved.");
     await logging.record(message.guild, {
       action: "alias_remove",
@@ -51,7 +52,7 @@ async function aliasCommand(message, args, prefix) {
   }
   if (action === "removeall") {
     const commandText = normalizeCommand(args.slice(2).join(" "), prefix);
-    if (!commandText) return reply(message, "Usage", `\`${prefix}alias removeall <command>\``);
+    if (!commandText) return replyUsage(message, "aliasremoveall");
     const removed = store.removeAliasesForCommand(message.guild.id, commandText);
     if (!removed) return reply(message, "Missing Alias", "No aliases point at that command.");
     await logging.record(message.guild, {
@@ -72,7 +73,7 @@ async function aliasCommand(message, args, prefix) {
   }
   if (action === "view") {
     const shortcut = (args[2] || "").toLowerCase();
-    if (!shortcut) return reply(message, "Usage", `\`${prefix}alias view <shortcut>\``);
+    if (!shortcut) return replyUsage(message, "aliasview");
     const commandText = store.getAlias(message.guild.id, shortcut);
     if (!commandText) return reply(message, "Missing Alias", "That shortcut is not saved.");
     return reply(message, "Alias", `\`${prefix}${shortcut}\` runs \`${prefix}${commandText}\`.`);
@@ -81,7 +82,7 @@ async function aliasCommand(message, args, prefix) {
     const shortcut = (args[2] || "").toLowerCase();
     const commandText = normalizeCommand(args.slice(3).join(" "), prefix);
     if (!shortcut || !commandText) {
-      return reply(message, "Usage", `\`${prefix}alias add <shortcut> <command>\``);
+      return replyUsage(message, "aliasadd");
     }
     if (!/^[a-z0-9_-]{1,20}$/.test(shortcut)) {
       return reply(message, "Invalid Shortcut", "Use 1 to 20 letters, numbers, dashes, or underscores.");

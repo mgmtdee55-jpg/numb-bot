@@ -12,6 +12,7 @@ const store = require("./systems/store");
 const roles = require("./vouch/roles");
 const { ACCENT } = require("./vouch/constants");
 const { reply } = require("./vouch/ui");
+const { replyUsage } = require("./usage");
 const { logThrottledError } = require("./log-throttle");
 
 connection.exec(`
@@ -241,7 +242,7 @@ async function protectRoles(message, roleList) {
     return reply(message, "Access Denied", "Only Gods and the server owner can protect a role.");
   }
   const usable = roleList.filter((role) => role && role.id !== message.guild.id && !role.managed);
-  if (!usable.length) return reply(message, "Usage", "`-protect @role` or `-protect @role, @role`");
+  if (!usable.length) return replyUsage(message, "protect");
   const blocked = [];
   const ready = [];
   for (const role of usable) {
@@ -372,12 +373,10 @@ async function handleCommand(message, name, args) {
   if (name === "protected") return listMine(message);
   if (name !== "protect") return false;
   const found = targetsFrom(message, args);
-  if (found.roles.length && found.users.length) {
-    return reply(message, "Usage", "Protect roles or one user, not both in the same command.\n`-protect @role, @role`\n`-protect @user`");
-  }
+  if (found.roles.length && found.users.length) return replyUsage(message, "protect");
   if (found.roles.length) return protectRoles(message, found.roles);
   if (found.users.length) return protectUsers(message, found.users);
-  return reply(message, "Usage", "`-protect @role, @role`\n`-protect @user`\n`-protected`\n`-plist`");
+  return replyUsage(message, "protect");
 }
 
 function actorId(interaction) {

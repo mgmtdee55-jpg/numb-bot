@@ -282,7 +282,8 @@ test("dragall moves only the named channel and muteall stays in the current call
   store.saveGuard(guild.id, shielded.id, { shield: true });
 
   const missing = await run(guild, founder, "-dragall");
-  assert.equal(titleOf(missing), "Usage");
+  assert.match(textOf(missing), /\*\*Command:\*\* dragall/);
+  assert.match(textOf(missing), /dragall \(channel\)/);
   const unnamed = await run(guild, founder, "-dragall lobby");
   assert.equal(titleOf(unnamed), "Missing Channel");
   assert.equal(pulledA.voice.channelId, source.id);

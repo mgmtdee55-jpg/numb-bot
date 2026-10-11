@@ -5,6 +5,7 @@ const access = require("./access");
 const cooldowns = require("./cooldowns");
 const stats = require("../stats");
 const { reply } = require("../vouch/ui");
+const { replyUsage } = require("../usage");
 
 const moving = new Map();
 const muteAttempts = new Map();
@@ -111,9 +112,7 @@ function isVoiceChannel(channel) {
 }
 
 async function dragAll(message, argument) {
-  if (!String(argument || "").trim()) {
-    return reply(message, "Usage", "`-dragall #channel` or `-dragall channel-id`\nA voice channel mention or ID is required. Nobody is moved without one.");
-  }
+  if (!String(argument || "").trim()) return replyUsage(message, "dragall");
   const destination = currentChannel(message.member);
   if (!destination) return reply(message, "Join a Voice Channel", "Join the voice channel people should be dragged into.");
   const source = await resolveVoiceChannel(message, argument);

@@ -10,6 +10,7 @@ const {
 const { ACCENT } = require("./vouch/constants");
 const { card } = require("./feedback");
 const { reply } = require("./vouch/ui");
+const { replyUsage } = require("./usage");
 const access = require("./systems/access");
 const { hasFakePermission } = require("./fake-permissions");
 
@@ -327,7 +328,7 @@ async function show(message, argument) {
     return reply(message, "Access Denied", "Gods and people with view audit log can use this.");
   }
   const user = await resolveUser(message, argument);
-  if (!user?.id) return reply(message, "Missing User", "Mention a user or provide their ID.\n`-auditlog @user`");
+  if (!user?.id) return replyUsage(message, "auditlog");
   if (!botCanRead(message.guild)) {
     return reply(message, "Bot Missing Permission", "I need View Audit Log to read this.");
   }

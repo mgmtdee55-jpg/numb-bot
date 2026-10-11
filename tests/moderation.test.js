@@ -359,3 +359,49 @@ test("foreverban is owner-tier and cannot be lifted with unban", async () => {
   assert.equal(title(lifted), "Foreverban Lifted");
   assert.equal(db.isForeverbanned(guild.id, target.id), false);
 });
+
+test("bare ban and a bad ban show the usage card", async () => {
+  const guild = makeGuild("ban-usage");
+  const owner = makeMember(guild, "777000000000000001", { owner: true, username: "y.dm" });
+  const bare = makeMessage(guild, "-ban", owner);
+  bare.author.username = "y.dm";
+  bare.author.displayAvatarURL = () => "https://cdn.discordapp.com/embed/avatars/0.png";
+  await handleCommand(bare, null, "-");
+  const data = bare.replies[0].embeds[0].data;
+  assert.equal(data.author.name, "y.dm");
+  assert.equal(data.author.icon_url, "https://cdn.discordapp.com/embed/avatars/0.png");
+  assert.match(data.description, /\*\*Command:\*\* ban\nBan a user from the server\./);
+  assert.match(data.description, /\*\*How To Use\*\*/);
+  assert.match(data.description, /\u001b\[2;36mSyntax:\u001b\[0m \u001b\[2;32mban \(user\) \[\$days\] \[reason\] \[\$silent\]/);
+  assert.match(data.description, /\u001b\[2;36mExample:\u001b\[0m \u001b\[2;32mban @user \$7 spamming in chat/);
+  assert.equal(guild.banCalls.length, 0);
+
+  const wrong = makeMessage(guild, "-ban nobody", owner);
+  await handleCommand(wrong, null, "-");
+  assert.match(description(wrong), /\*\*Command:\*\* ban/);
+});
+
+test("ban accepts message days and a silent flag", async () => {
+  const guild = makeGuild("ban-flags");
+  const owner = makeMember(guild, "777000000000000002", { owner: true });
+  const target = makeMember(guild, "777000000000000003");
+  const flagged = makeMessage(guild, `-ban ${target.id} $7 spamming in chat`, owner);
+  await handleCommand(flagged, null, "-");
+  assert.equal(title(flagged), "Member Banned");
+  assert.equal(guild.banCalls[0].options.deleteMessageSeconds, 7 * 86400);
+  assert.match(guild.banCalls[0].options.reason, /spamming in chat/);
+
+  const again = makeMember(guild, target.id);
+  const silent = makeMessage(guild, `-ban ${again.id} $silent`, owner);
+  let deleted = false;
+  silent.delete = async () => { deleted = true; };
+  await handleCommand(silent, null, "-");
+  assert.equal(silent.replies.length, 0);
+  assert.equal(deleted, true);
+  assert.equal(guild.banCalls.at(-1).userId, again.id);
+
+  const invalid = makeMessage(guild, `-ban ${owner.id} $9`, owner);
+  await handleCommand(invalid, null, "-");
+  assert.match(description(invalid), /\*\*Command:\*\* ban/);
+  assert.equal(guild.banCalls.length, 2);
+});

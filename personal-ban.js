@@ -1,6 +1,7 @@
 const db = require("./db");
 const access = require("./systems/access");
 const { reply } = require("./vouch/ui");
+const { replyUsage } = require("./usage");
 
 function canPlace(member) {
   return access.isServerOwner(member) || access.isBotOwner(member?.id) || access.isGod(member);
@@ -24,7 +25,7 @@ async function place(message, userId, user) {
   if (!canPlace(message.member)) {
     return reply(message, "Access Denied", "Only Gods and the server owner can place a personal ban.");
   }
-  if (!userId) return reply(message, "Usage", "`-pban @user`");
+  if (!userId) return replyUsage(message, "pban");
   if (userId === message.guild.ownerId) {
     return reply(message, "Unable to Ban", "The server owner cannot be personally banned.");
   }

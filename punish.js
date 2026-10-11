@@ -13,6 +13,7 @@ const stats = require("./stats");
 const { resolveMember, resolveRole } = require("./vouch/resolve");
 const roles = require("./vouch/roles");
 const { embed, reply } = require("./vouch/ui");
+const { replyUsage } = require("./usage");
 
 const GAP_MS = 400;
 const CONFIRM_MS = 60_000;
@@ -656,7 +657,24 @@ async function handleCommand(message, name, args) {
     await setConfiguredRole(message, args.slice(2).join(" "), "cam_blacklist_role_id", "The camera blacklist role");
     return true;
   }
-  const member = await resolveMember(message, name === "camblacklist" ? args[1] : args[1]);
+  const usageName = {
+    jail: "jail",
+    unjail: "unjail",
+    cmute: "cmute",
+    chatmute: "cmute",
+    imute: "imute",
+    imagemute: "imute",
+    rmute: "rmute",
+    reactionmute: "rmute",
+    mute: "mute",
+    servermute: "servermute",
+    camblacklist: "camblacklist"
+  }[name];
+  const member = await resolveMember(message, args[1]);
+  if (!member && usageName) {
+    await replyUsage(message, usageName);
+    return true;
+  }
   if (name === "jail") {
     await jail(message, member, args.slice(2).join(" ").trim());
     return true;
