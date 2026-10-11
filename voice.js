@@ -300,9 +300,28 @@ function categoryMemberLoad(guild, categoryId) {
   return connectedMembers.size + notYetObservedReservations;
 }
 
+function isRateLimitError(error) {
+  return Number(error?.status) === 429 || Number(error?.code) === 429 || error?.name === "RateLimitError";
+}
+
 function isCategoryLimitError(error) {
+  if (isRateLimitError(error)) return false;
   return [30013, 30030, 50035].includes(Number(error?.code))
-    || /maximum|full|limit|category/i.test(error?.message || "");
+    || /maximum|full|category/i.test(String(error?.message || ""));
+}
+
+function clampBitrate(guild, bitrate) {
+  const requested = Number(bitrate);
+  const fallback = 64000;
+  const max = Number(guild?.maximumBitrate) > 0 ? Number(guild.maximumBitrate) : 96000;
+  const chosen = Number.isFinite(requested) && requested > 0 ? requested : fallback;
+  return Math.min(max, Math.max(8000, Math.round(chosen)));
+}
+
+function clampUserLimit(limit) {
+  const requested = Number(limit);
+  if (!Number.isFinite(requested) || requested <= 0) return 0;
+  return Math.min(99, Math.floor(requested));
 }
 
 function addPending(store, key, reservationId) {
@@ -461,8 +480,8 @@ async function createTempChannelInCategory(guild, member, config, categoryId) {
     name: renderName(config.name_template || "{nickname}'s Channel", member),
     type: ChannelType.GuildVoice,
     parent: categoryId,
-    bitrate: config.bitrate,
-    userLimit: config.user_limit,
+    bitrate: clampBitrate(guild, config.bitrate),
+    userLimit: clampUserLimit(config.user_limit),
     permissionOverwrites: [
       {
         id: guild.roles.everyone.id,
@@ -509,7 +528,7 @@ async function createTempChannel(guild, member, config) {
       return await createTempChannelInCategory(guild, member, config, categoryId);
     } catch (error) {
       lastError = error;
-      if (!isCategoryLimitError(error) || isLast) throw error;
+      if (isRateLimitError(error) || !isCategoryLimitError(error) || isLast) throw error;
     }
   }
   throw lastError || new Error("All configured VoiceMaster categories are full.");
@@ -751,6 +770,9 @@ module.exports = {
   panelEmbed,
   panelRows,
   reserveTempCategory,
+  isRateLimitError,
+  clampBitrate,
+  clampUserLimit,
   isChannelMember,
   scheduleOwnerRelease,
   cancelOwnerRelease,

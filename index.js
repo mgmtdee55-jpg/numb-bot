@@ -63,6 +63,9 @@ client.once("clientReady", async () => {
       try {
         await reconcileGuild(guild);
         await cleanupEmptyTempChannels(guild);
+        handleVoiceState.recoverGuild(guild).catch((error) => {
+          logThrottledError(`j2c-recover:${guild.id}`, `[J2C recover] ${guild.id}`, error);
+        });
       } catch (error) {
         console.error(`[startup recovery] ${guild.id}`, error);
       }
@@ -130,14 +133,20 @@ client.on("messageUpdate", async (before, after) => {
   }
 });
 
-client.on("voiceStateUpdate", createVoiceStateHandler({
+const handleVoiceState = createVoiceStateHandler({
   db,
   createTempChannel,
   renderVoiceChannelInterface,
   reserveTempCategory,
   cleanupEmptyTempChannels,
   cleanupTempChannel
-}));
+});
+
+client.on("voiceStateUpdate", (before, after) => {
+  handleVoiceState(before, after).catch((error) => {
+    logThrottledError(`voice-state:${after?.guild?.id}`, "[voice state]", error);
+  });
+});
 
 client.on("messageDelete", async (message) => {
   snipe.capture(message);
@@ -268,6 +277,9 @@ const cleanupTimer = setInterval(async () => {
     for (const guild of client.guilds.cache.values()) {
       try {
         await cleanupEmptyTempChannels(guild);
+        handleVoiceState.recoverGuild(guild).catch((error) => {
+          logThrottledError(`j2c-recover:${guild.id}`, `[J2C recover] ${guild.id}`, error);
+        });
       } catch (error) {
         console.error(`[periodic cleanup] ${guild.id}`, error);
       }

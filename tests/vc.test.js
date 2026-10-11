@@ -40,7 +40,7 @@ const voice = require("../voice");
 const controls = require("../interface");
 const setupWizard = require("../setup-wizard");
 const { handleCommand } = require("../commands");
-const { createVoiceStateHandler } = require("../voice-events");
+const { createVoiceStateHandler, JOIN_PACE } = require("../voice-events");
 const { withChannelLock } = require("../channel-lock");
 const { consumeActionCooldown, clearActionCooldowns, ACTION_COOLDOWNS_MS } = require("../action-cooldowns");
 
@@ -1710,11 +1710,29 @@ test("category overflow threshold is configurable and reservations account for s
   }
 });
 
-test("500 simultaneous J2C joins are processed with bounded independent creation", async () => {
+function manualClock() {
+  let now = 0;
+  const waits = [];
+  return {
+    waits,
+    now: () => now,
+    pace: {
+      now: () => now,
+      sleep: async (ms) => {
+        waits.push(ms);
+        now += ms;
+      }
+    }
+  };
+}
+
+test("500 simultaneous J2C joins are queued inside Discord's rate limit", async () => {
   const guild = makeGuild("500-joins-guild");
+  const clock = manualClock();
   let active = 0;
   let maxActive = 0;
   let created = 0;
+  const starts = [];
   const members = Array.from({ length: 500 }, (_, index) =>
     makeMember(guild, String(BigInt(151000000000000000) + BigInt(index)), { channelId: "j2c" })
   );
@@ -1723,7 +1741,9 @@ test("500 simultaneous J2C joins are processed with bounded independent creation
       getConfig: () => ({ j2c_channel_id: "j2c", category_id: "category" }),
       getTempChannel: () => null
     },
+    pace: clock.pace,
     createTempChannel: async (_guild, member) => {
+      starts.push(clock.now());
       active += 1;
       maxActive = Math.max(maxActive, active);
       await Promise.resolve();
@@ -1741,9 +1761,13 @@ test("500 simultaneous J2C joins are processed with bounded independent creation
   )));
 
   assert.equal(created, 500);
-  assert.ok(maxActive > 1);
-  assert.ok(maxActive <= 5);
+  assert.equal(maxActive, JOIN_PACE.maxConcurrent);
   assert.equal(members.filter((member) => member.voice.channelId === `temp-${member.id}`).length, 500);
+  assert.ok(clock.waits.length > 0);
+  for (const start of starts) {
+    const inWindow = starts.filter((time) => time >= start && time < start + JOIN_PACE.createWindowMs).length;
+    assert.ok(inWindow <= JOIN_PACE.createLimit);
+  }
 });
 
 test("a failed J2C creation does not block later queued members", async (t) => {
@@ -1752,13 +1776,18 @@ test("a failed J2C creation does not block later queued members", async (t) => {
   const members = Array.from({ length: 8 }, (_, index) =>
     makeMember(guild, String(BigInt(161000000000000000) + BigInt(index)), { channelId: "j2c" })
   );
+  const attempts = [];
   const handler = createVoiceStateHandler({
     db: {
       getConfig: () => ({ j2c_channel_id: "j2c", category_id: "category" }),
       getTempChannel: () => null
     },
+    pace: manualClock().pace,
     createTempChannel: async (_guild, member) => {
-      if (member.id === members[0].id) throw new Error("simulated channel creation failure");
+      attempts.push(member.id);
+      if (member.id === members[0].id && attempts.filter((id) => id === members[0].id).length === 1) {
+        throw new Error("simulated channel creation failure");
+      }
       return { id: `temp-${member.id}` };
     },
     renderVoiceChannelInterface: async () => {},
@@ -1770,8 +1799,9 @@ test("a failed J2C creation does not block later queued members", async (t) => {
     { guild, id: member.id, member, channelId: "j2c" }
   )));
 
-  assert.equal(members.filter((member) => member.voice.channelId === `temp-${member.id}`).length, 7);
-  assert.equal(members[0].voice.channelId, "j2c");
+  assert.equal(members.filter((member) => member.voice.channelId === `temp-${member.id}`).length, 8);
+  assert.ok(attempts.filter((id) => id === members[0].id).length >= 2);
+  assert.notEqual(attempts[1], members[0].id);
 });
 
 test("rate-limited J2C failures are isolated and similar logs are throttled", async (t) => {
@@ -1781,13 +1811,16 @@ test("rate-limited J2C failures are isolated and similar logs are throttled", as
   const members = Array.from({ length: 8 }, (_, index) =>
     makeMember(guild, String(BigInt(171000000000000000) + BigInt(index)), { channelId: "j2c" })
   );
+  const retried = new Set();
   const handler = createVoiceStateHandler({
     db: {
       getConfig: () => ({ j2c_channel_id: "j2c", category_id: "category" }),
       getTempChannel: () => null
     },
+    pace: manualClock().pace,
     createTempChannel: async (_guild, member) => {
-      if (member.id === members[0].id || member.id === members[1].id) {
+      if ((member.id === members[0].id || member.id === members[1].id) && !retried.has(member.id)) {
+        retried.add(member.id);
         throw Object.assign(new Error("Discord rate limit response"), { code: 429, retryAfter: 1000 });
       }
       return { id: `temp-${member.id}` };
@@ -1801,11 +1834,178 @@ test("rate-limited J2C failures are isolated and similar logs are throttled", as
     { guild, id: member.id, member, channelId: "j2c" }
   )));
 
-  assert.equal(members.filter((member) => member.voice.channelId.startsWith("temp-")).length, 6);
-  assert.equal(members[0].voice.channelId, "j2c");
-  assert.equal(members[1].voice.channelId, "j2c");
+  assert.equal(members.filter((member) => member.voice.channelId.startsWith("temp-")).length, 8);
   assert.equal(errors.length, 1);
   assert.equal(errors[0][1].code, 429);
+});
+
+test("a rate-limited J2C create waits for Discord and still opens the channel", async () => {
+  const guild = makeGuild("j2c-retry-success-guild");
+  const clock = manualClock();
+  const member = makeMember(guild, "181818181818181818", { channelId: "j2c" });
+  let calls = 0;
+  const handler = createVoiceStateHandler({
+    db: {
+      getConfig: () => ({ j2c_channel_id: "j2c", category_id: "category" }),
+      getTempChannel: () => null
+    },
+    pace: clock.pace,
+    createTempChannel: async () => {
+      calls += 1;
+      if (calls === 1) {
+        throw Object.assign(new Error("You are being rate limited."), { status: 429, retryAfter: 1500 });
+      }
+      return { id: "temp-after-wait" };
+    },
+    renderVoiceChannelInterface: async () => {},
+    cleanupEmptyTempChannels: async () => {}
+  });
+
+  await handler(
+    { channelId: null },
+    { guild, id: member.id, member, channelId: "j2c" }
+  );
+
+  assert.equal(calls, 2);
+  assert.equal(member.voice.channelId, "temp-after-wait");
+  assert.ok(clock.waits.includes(1550));
+});
+
+test("a rate-limited move is retried without creating a second channel", async () => {
+  const guild = makeGuild("j2c-move-retry-guild");
+  const clock = manualClock();
+  const member = makeMember(guild, "191919191919191919", { channelId: "j2c" });
+  let creates = 0;
+  let moves = 0;
+  member.voice.setChannel = async (channelId) => {
+    moves += 1;
+    if (moves === 1) {
+      throw Object.assign(new Error("You are being rate limited."), { status: 429, retryAfter: 800 });
+    }
+    member.voice.channelId = channelId;
+  };
+  const handler = createVoiceStateHandler({
+    db: {
+      getConfig: () => ({ j2c_channel_id: "j2c", category_id: "category" }),
+      getTempChannel: () => null
+    },
+    pace: clock.pace,
+    createTempChannel: async () => {
+      creates += 1;
+      return { id: "temp-move-retry" };
+    },
+    renderVoiceChannelInterface: async () => {},
+    cleanupEmptyTempChannels: async () => {}
+  });
+
+  await handler(
+    { channelId: null },
+    { guild, id: member.id, member, channelId: "j2c" }
+  );
+
+  assert.equal(creates, 1);
+  assert.equal(moves, 2);
+  assert.equal(member.voice.channelId, "temp-move-retry");
+  assert.ok(clock.waits.includes(850));
+});
+
+test("join to create fetches a member who is not cached yet", async () => {
+  const guild = makeGuild("uncached-j2c-member-guild");
+  const member = makeMember(guild, "292929292929292929", { channelId: "j2c" });
+  guild.members.cache.delete(member.id);
+  let fetched = 0;
+  guild.members.fetch = async (userId) => {
+    fetched += 1;
+    assert.equal(userId, member.id);
+    guild.members.cache.set(userId, member);
+    return member;
+  };
+  const handler = createVoiceStateHandler({
+    db: {
+      getConfig: () => ({ j2c_channel_id: "j2c", category_id: "category" }),
+      getTempChannel: () => null
+    },
+    createTempChannel: async () => ({ id: "temp-fetched" }),
+    renderVoiceChannelInterface: async () => {},
+    cleanupEmptyTempChannels: async () => {}
+  });
+
+  await handler(
+    { channelId: null },
+    { guild, id: member.id, member: null, channelId: "j2c" }
+  );
+
+  assert.equal(fetched, 1);
+  assert.equal(member.voice.channelId, "temp-fetched");
+});
+
+test("someone already waiting in join-to-create is moved without a new join event", async () => {
+  const guild = makeGuild("j2c-already-waiting-guild");
+  const member = makeMember(guild, "303030303030303030", { channelId: "j2c" });
+  guild.voiceStates.cache.set(member.id, { id: member.id, channelId: "j2c", member });
+  const handler = createVoiceStateHandler({
+    db: {
+      getConfig: () => ({ j2c_channel_id: "j2c", category_id: "category" }),
+      getTempChannel: () => null
+    },
+    createTempChannel: async () => ({ id: "temp-waiting" }),
+    renderVoiceChannelInterface: async () => {},
+    cleanupEmptyTempChannels: async () => {}
+  });
+
+  await handler.recoverGuild(guild);
+
+  assert.equal(member.voice.channelId, "temp-waiting");
+});
+
+test("join to create clamps bitrate and user limit to what Discord will accept", async () => {
+  const guild = makeGuild("bitrate-clamp-guild");
+  guild.maximumBitrate = 64000;
+  const category = makeCategory(guild);
+  const member = makeMember(guild, "272727272727272727");
+  db.setConfig({
+    guild_id: guild.id,
+    j2c_channel_id: "bitrate-j2c",
+    category_id: category.id,
+    server_interface_channel_id: "disabled",
+    server_interface_message_id: null,
+    name_template: "{nickname}'s Channel",
+    user_limit: 150,
+    bitrate: 256000,
+    cleanup_seconds: 0,
+    server_interface_enabled: 0
+  });
+
+  const created = await voice.createTempChannel(guild, member, db.getConfig(guild.id));
+  assert.equal(created.createOptions.bitrate, 64000);
+  assert.equal(created.createOptions.userLimit, 99);
+});
+
+test("a Discord rate limit does not open a channel in the next category", async () => {
+  const guild = makeGuild("rate-limit-not-category-guild");
+  const categories = [makeCategory(guild), makeCategory(guild)];
+  const member = makeMember(guild, "282828282828282828");
+  db.setConfig({
+    guild_id: guild.id,
+    j2c_channel_id: "rate-limit-category-j2c",
+    category_id: categories[0].id,
+    category_ids: JSON.stringify(categories.map((category) => category.id)),
+    server_interface_channel_id: "disabled",
+    server_interface_message_id: null,
+    name_template: "{nickname}'s Channel",
+    user_limit: 0,
+    bitrate: 64000,
+    cleanup_seconds: 0,
+    server_interface_enabled: 0
+  });
+  let creates = 0;
+  guild.channels.create = async () => {
+    creates += 1;
+    throw Object.assign(new Error("You are being rate limited."), { status: 429, retryAfter: 1 });
+  };
+
+  await assert.rejects(() => voice.createTempChannel(guild, member, db.getConfig(guild.id)));
+  assert.equal(creates, 1);
 });
 
 test("channel locks serialize one VC without blocking actions on other VCs", async () => {
