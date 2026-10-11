@@ -570,7 +570,7 @@ test("showallcommands pages one category at a time", async () => {
     "VC Ranks", "Vouch", "Staff", "Godmode", "Force", "Social", "Vanity", "Protection", "Giveaways", "Bot"
   ]);
   const text = pages.map((page) => page.description).join("\n");
-  for (const command of ["-ban", "-pban", "-antinuke vouch limit view", "-role limit set", "-nuke", "-ceo add", "-showallcommands", "-instagram", "-giveaways start", "-embedcreate", "-modlogreset", "-voiceshield", "-snipe", "-clearsnipe", "-modstats", "-viewstats", "-jail", "-vc edit"]) {
+  for (const command of ["-ban", "-pban", "-antinuke vouch limit view", "-role limit set", "-nuke", "-ceo add", "-showallcommands", "-instagram", "-giveaways start", "-embedcreate", "-modlogreset", "-voiceshield", "-snipe", "-clearsnipe", "-modstats", "-viewstats", "-jail", "-vc edit", "-roles"]) {
     assert.ok(text.includes(`\`${command}\``), command);
   }
   assert.doesNotMatch(text, /vouch check|vouch wipeall|limitedroles|setvouchlogs/);
@@ -845,4 +845,61 @@ test("updates keep saved vc rows, history, and command grants", async () => {
   assert.equal(grant.command, "unmuteall");
   assert.equal(temp.owner_id, owner.id);
   assert.equal(history.summary, "joined the saved vc");
+});
+
+test("roles lists member counts and pages for the opener", async () => {
+  const guild = makeGuild();
+  const owner = makeMember(guild, OWNER, { name: "kutt" });
+  const member = makeMember(guild, MEMBER, { name: "member" });
+  owner.roles.cache.set(ROLE, guild.roles.cache.get(ROLE));
+  for (let index = 1; index <= 10; index += 1) {
+    const id = `role-extra-${index}`;
+    guild.roles.cache.set(id, { id, name: `Extra ${index}`, position: 10 + index, managed: false });
+  }
+  guild.roles.cache.set("role-empty", { id: "role-empty", name: "Empty", position: 3, managed: false });
+  const shown = await run(guild, owner, "-roles");
+  const data = shown.replies[0].embeds[0].data;
+  assert.equal(data.author.name, "kutt");
+  assert.match(data.description, /^1\. <@&role-extra-10> → 0 members/);
+  assert.equal(data.footer.text, "12 roles, Page 1/2");
+  const buttons = shown.replies[0].components[0].components;
+  assert.equal(buttons.length, 3);
+  assert.equal(buttons[0].data.disabled, true);
+  assert.equal(buttons[1].data.disabled, false);
+  const next = {
+    customId: buttons[1].data.custom_id,
+    user: owner.user,
+    guild,
+    async update(payload) { this.updated = payload; },
+    async showModal(modal) { this.modal = modal; }
+  };
+  assert.equal(await require("../extras").handleInteraction(next), true);
+  assert.match(next.updated.embeds[0].data.description, /12\. <@&222000000000000010> → 1 member/);
+  assert.equal(next.updated.embeds[0].data.footer.text, "12 roles, Page 2/2");
+  const stranger = {
+    customId: buttons[1].data.custom_id,
+    user: member.user,
+    guild,
+    async reply(payload) { this.sent = payload; }
+  };
+  assert.equal(await require("../extras").handleInteraction(stranger), true);
+  assert.match(stranger.sent.embeds[0].data.description, /Not Yours/);
+  const search = {
+    customId: buttons[2].data.custom_id,
+    user: owner.user,
+    guild,
+    async showModal(modal) { this.modal = modal; }
+  };
+  assert.equal(await require("../extras").handleInteraction(search), true);
+  assert.equal(search.modal.data.custom_id, `spanter:roles:${owner.id}:find`);
+  const found = {
+    customId: `spanter:roles:${owner.id}:find`,
+    user: owner.user,
+    guild,
+    fields: { getTextInputValue: () => "VIP" },
+    async update(payload) { this.updated = payload; }
+  };
+  assert.equal(await require("../extras").handleInteraction(found), true);
+  assert.match(found.updated.embeds[0].data.description, /<@&222000000000000010> → 1 member/);
+  assert.equal(found.updated.embeds[0].data.footer.text, "12 roles, Page 2/2");
 });

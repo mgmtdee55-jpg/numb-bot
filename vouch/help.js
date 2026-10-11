@@ -150,7 +150,8 @@ function infoText(prefix) {
     `\`${p}avatar [@user]\``,
     `\`${p}banner [@user]\``,
     `\`${p}serverinfo\``,
-    `\`${p}userinfo [@user]\``
+    `\`${p}userinfo [@user]\``,
+    `\`${p}roles\``
   ].join("\n");
 }
 

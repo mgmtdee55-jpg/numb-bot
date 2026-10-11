@@ -650,6 +650,10 @@ async function handleCommand(message, args, prefix) {
     await handleRoleLimit(message, args);
     return true;
   }
+  if (name === "roles") {
+    await require("../role-list").showRoles(message);
+    return true;
+  }
   if (name === "avatar" || name === "banner" || name === "serverinfo" || name === "userinfo") {
     await handleInfo(message, name, args);
     return true;
