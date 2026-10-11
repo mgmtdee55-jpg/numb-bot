@@ -3,6 +3,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
+const { ChannelType } = require("discord.js");
 
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "spanter-extras-"));
 process.env.DB_PATH = path.join(scratch, "vc.sqlite");
@@ -247,9 +248,206 @@ test("voice configuration is visible to gods and owners and hidden from everyone
   await vcConfig.show(shown);
   assert.equal(title(shown), "VoiceMaster Configuration");
   assert.match(shown.replies[0].embeds[0].data.description, /333000000000000010/);
-  assert.equal(shown.replies[0].components[0].components[0].data.label, "Configure");
+  assert.equal(shown.replies[0].components[0].components[0].data.label, "Join to create");
+  assert.match(shown.replies[0].embeds[0].data.description, /Existing voice channels and categories stay in place/);
 
   const stranger = messageFor(member(MEMBER, server), "-vc config");
   await vcConfig.show(stranger);
   assert.equal(title(stranger), "Access Denied");
+});
+
+function trackedChannel(id, type, name, deleted) {
+  return {
+    id,
+    type,
+    name,
+    delete: async () => {
+      deleted.push(id);
+    }
+  };
+}
+
+function configInteraction(person, customId, extra = {}) {
+  const message = {
+    edits: [],
+    async edit(payload) {
+      this.edits.push(payload);
+      return payload;
+    }
+  };
+  return {
+    customId,
+    guild: person.guild,
+    user: person.user,
+    member: person,
+    message,
+    values: extra.values || [],
+    fields: {
+      getTextInputValue: (name) => extra.fields?.[name]
+    },
+    replied: false,
+    deferred: false,
+    async update(payload) {
+      this.updated = payload;
+      message.edits.push(payload);
+    },
+    async reply(payload) {
+      this.replied = true;
+      this.replyPayload = payload;
+    },
+    async showModal(modal) {
+      this.modal = modal;
+    }
+  };
+}
+
+test("voice configuration updates every setting and leaves calls and categories in place", async () => {
+  const deleted = [];
+  const server = guild();
+  server.maximumBitrate = 128000;
+  const j2c = trackedChannel("333000000000000010", ChannelType.GuildVoice, "join", deleted);
+  const nextJ2c = trackedChannel("333000000000000013", ChannelType.GuildVoice, "join-2", deleted);
+  const category = trackedChannel("333000000000000011", ChannelType.GuildCategory, "calls", deleted);
+  const nextCategory = trackedChannel("333000000000000012", ChannelType.GuildCategory, "calls-2", deleted);
+  const temp = trackedChannel("333000000000000014", ChannelType.GuildVoice, "someone", deleted);
+  for (const channel of [j2c, nextJ2c, category, nextCategory, temp]) {
+    server.channels.cache.set(channel.id, channel);
+  }
+  db.setConfig({
+    guild_id: server.id,
+    j2c_channel_id: j2c.id,
+    category_id: category.id,
+    category_ids: JSON.stringify([category.id]),
+    name_template: "{nickname}'s Channel",
+    user_limit: 0,
+    bitrate: 64000,
+    cleanup_seconds: 0,
+    server_interface_enabled: 1,
+    server_interface_channel_id: "333000000000000099",
+    server_interface_message_id: "333000000000000098"
+  });
+  db.addTemp({
+    channel_id: temp.id,
+    guild_id: server.id,
+    owner_id: OWNER,
+    interface_message_id: null,
+    created_at: Date.now()
+  });
+  const owner = member(OWNER, server);
+  const labels = (await (async () => {
+    const shown = messageFor(owner, "-vc config");
+    await vcConfig.show(shown);
+    return shown.replies[0].components.flatMap((row) => row.components.map((component) => component.data.label));
+  })());
+  assert.deepEqual(labels, ["Join to create", "Categories", "Name", "User limit", "Bitrate", "Cleanup", "Interface"]);
+
+  const rejected = configInteraction(owner, "spanter:vcconfig:set:j2c", { values: [category.id] });
+  await vcConfig.handleButton(rejected);
+  assert.match(rejected.updated.embeds[0].data.description, /voice channel/);
+  assert.equal(db.getConfig(server.id).j2c_channel_id, j2c.id);
+
+  const stranger = configInteraction(member(MEMBER, server), "spanter:vcconfig:set:j2c", { values: [nextJ2c.id] });
+  await vcConfig.handleButton(stranger);
+  assert.match(stranger.replyPayload.embeds[0].data.description, /server owner/);
+  assert.equal(db.getConfig(server.id).j2c_channel_id, j2c.id);
+
+  await vcConfig.handleButton(configInteraction(owner, "spanter:vcconfig:set:j2c", { values: [nextJ2c.id] }));
+  await vcConfig.handleButton(configInteraction(owner, "spanter:vcconfig:set:categories", { values: [nextCategory.id] }));
+  const namePrompt = configInteraction(owner, "spanter:vcconfig:name");
+  await vcConfig.handleButton(namePrompt);
+  assert.equal(namePrompt.modal.data.custom_id, "spanter:vcconfig:modal:name");
+  await vcConfig.handleButton(configInteraction(owner, "spanter:vcconfig:modal:name", {
+    fields: { name: "{username}'s Room" }
+  }));
+  await vcConfig.handleButton(configInteraction(owner, "spanter:vcconfig:modal:limit", {
+    fields: { limit: "7" }
+  }));
+  await vcConfig.handleButton(configInteraction(owner, "spanter:vcconfig:set:bitrate", { values: ["96000"] }));
+  await vcConfig.handleButton(configInteraction(owner, "spanter:vcconfig:set:cleanup", { values: ["300"] }));
+  await vcConfig.handleButton(configInteraction(owner, "spanter:vcconfig:interface:off"));
+
+  const config = db.getConfig(server.id);
+  assert.equal(config.j2c_channel_id, nextJ2c.id);
+  assert.equal(config.category_id, nextCategory.id);
+  assert.deepEqual(JSON.parse(config.category_ids), [nextCategory.id]);
+  assert.equal(config.name_template, "{username}'s Room");
+  assert.equal(config.user_limit, 7);
+  assert.equal(config.bitrate, 96000);
+  assert.equal(config.cleanup_seconds, 300);
+  assert.equal(config.server_interface_enabled, 0);
+  assert.equal(config.server_interface_channel_id, "333000000000000099");
+  assert.equal(config.server_interface_message_id, "333000000000000098");
+  assert.ok(db.getTempChannel(temp.id));
+  assert.equal(server.channels.cache.get(j2c.id), j2c);
+  assert.equal(server.channels.cache.get(category.id), category);
+  assert.equal(server.channels.cache.get(temp.id), temp);
+  assert.deepEqual(deleted, []);
+});
+
+test("voice configuration waits to save until a join channel and category exist", async () => {
+  const deleted = [];
+  const server = {
+    id: "config-draft-guild",
+    ownerId: OWNER,
+    maximumBitrate: 64000,
+    channels: { cache: new Map() },
+    roles: { cache: new Map() },
+    members: { cache: new Map() }
+  };
+  const j2c = trackedChannel("444000000000000010", ChannelType.GuildVoice, "join", deleted);
+  const category = trackedChannel("444000000000000011", ChannelType.GuildCategory, "calls", deleted);
+  const temp = trackedChannel("444000000000000012", ChannelType.GuildVoice, "live", deleted);
+  for (const channel of [j2c, category, temp]) server.channels.cache.set(channel.id, channel);
+  db.addTemp({
+    channel_id: temp.id,
+    guild_id: server.id,
+    owner_id: OWNER,
+    interface_message_id: null,
+    created_at: Date.now()
+  });
+  const owner = member(OWNER, server);
+  const waiting = configInteraction(owner, "spanter:vcconfig:set:j2c", { values: [j2c.id] });
+  await vcConfig.handleButton(waiting);
+  assert.equal(db.getConfig(server.id), undefined);
+  assert.match(waiting.updated.embeds[0].data.description, /stay in place/);
+
+  await vcConfig.handleButton(configInteraction(owner, "spanter:vcconfig:set:categories", { values: [category.id] }));
+  const config = db.getConfig(server.id);
+  assert.equal(config.j2c_channel_id, j2c.id);
+  assert.equal(config.category_id, category.id);
+  assert.deepEqual(JSON.parse(config.category_ids), [category.id]);
+  assert.equal(config.server_interface_enabled, 0);
+  assert.ok(db.getTempChannel(temp.id));
+  assert.equal(server.channels.cache.get(category.id), category);
+  assert.deepEqual(deleted, []);
+
+  const created = [];
+  server.iconURL = () => null;
+  server.emojis = {
+    cache: new Map(),
+    fetch: async () => server.emojis.cache
+  };
+  server.roles.everyone = { id: server.id };
+  server.channels.create = async (options) => {
+    const channel = trackedChannel("444000000000000099", ChannelType.GuildText, options.name, deleted);
+    channel.topic = options.topic;
+    channel.parentId = options.parent;
+    channel.guild = server;
+    channel.send = async () => ({ id: "444000000000000098" });
+    created.push(options);
+    server.channels.cache.set(channel.id, channel);
+    return channel;
+  };
+  await vcConfig.handleButton(configInteraction(owner, "spanter:vcconfig:interface:on"));
+  const enabled = db.getConfig(server.id);
+  assert.equal(enabled.server_interface_enabled, 1);
+  assert.equal(enabled.server_interface_channel_id, "444000000000000099");
+  assert.equal(enabled.server_interface_message_id, "444000000000000098");
+  assert.equal(created.length, 1);
+  assert.equal(created[0].type, ChannelType.GuildText);
+  assert.equal(created[0].parent, category.id);
+  assert.ok(db.getTempChannel(temp.id));
+  assert.equal(server.channels.cache.get(j2c.id), j2c);
+  assert.equal(server.channels.cache.get(category.id), category);
+  assert.deepEqual(deleted, []);
 });

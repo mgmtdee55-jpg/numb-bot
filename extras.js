@@ -118,7 +118,7 @@ async function handleInteraction(interaction) {
   }
   if (id.startsWith("spanter:embed:")) return embedPanel.handleInteraction(interaction);
   if (id.startsWith("spanter:gw:")) return giveaways.handleButton(interaction);
-  if (id === "spanter:vcconfig:setup") return vcConfig.handleButton(interaction);
+  if (id.startsWith("spanter:vcconfig:")) return vcConfig.handleButton(interaction);
   if (id.startsWith("spanter:vanity:")) return vanity.handleInteraction(interaction);
   if (id.startsWith("spanter:protect:")) return require("./protect").handleInteraction(interaction);
   if (id.startsWith("spanter:snipe:")) return snipe.handleButton(interaction);
