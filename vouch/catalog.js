@@ -14,7 +14,7 @@ const WHO = {
   lock: "Founder+", unlock: "Founder+", hide: "Founder+", unhide: "Founder+",
   lockall: "Founder+", unlockall: "Founder+", nuke: "Founder+ · 25s", lockdown: "Founder+", unlockdown: "Founder+",
   logging: "Gods+", "logging set": "Gods+", "logging remove": "Gods+", "logging test": "Gods+", logs: "Gods+",
-  auditlog: "Gods+",
+  auditlog: "Everyone",
   modlogreset: "Gods+",
   "role limit set": "Gods+", "role limit remove": "Gods+", "role limit view": "Gods+",
   vc: "Everyone", "vc setup": "Owner", "vc lock": "Everyone", "vc unlock": "Everyone",
@@ -331,6 +331,7 @@ function commandPages(prefix = "-") {
 function pageMessage(prefix = "-", index = 0, member = null) {
   const pages = commandPages(prefix);
   const safe = Math.min(Math.max(pages.length - 1, 0), Math.max(0, Number(index) || 0));
+  const userId = member?.id || "";
   const page = pages[safe];
   const rank = member ? access.rankLine(member) : "";
   const embed = new EmbedBuilder()
@@ -351,13 +352,13 @@ function pageMessage(prefix = "-", index = 0, member = null) {
   });
   const menu = new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder()
-      .setCustomId("spanter:commands:cat")
+      .setCustomId(`spanter:commands:cat:${userId}`)
       .setPlaceholder("Jump to a category")
       .addOptions(options)
   );
   const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId(`spanter:commands:${safe - 1}`).setLabel("Back").setStyle(ButtonStyle.Secondary).setDisabled(safe <= 0),
-    new ButtonBuilder().setCustomId(`spanter:commands:${safe + 1}`).setLabel("Next").setStyle(ButtonStyle.Secondary).setDisabled(safe >= pages.length - 1)
+    new ButtonBuilder().setCustomId(`spanter:commands:${userId}:${safe - 1}`).setLabel("Back").setStyle(ButtonStyle.Secondary).setDisabled(safe <= 0),
+    new ButtonBuilder().setCustomId(`spanter:commands:${userId}:${safe + 1}`).setLabel("Next").setStyle(ButtonStyle.Secondary).setDisabled(safe >= pages.length - 1)
   );
   return { embeds: [embed], components: [menu, row] };
 }

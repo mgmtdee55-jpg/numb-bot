@@ -1,5 +1,6 @@
 const {
   ActionRowBuilder,
+  MessageFlags,
   StringSelectMenuBuilder
 } = require("discord.js");
 const store = require("./store");
@@ -413,19 +414,26 @@ function helpOptions(selected, withEmoji) {
   });
 }
 
-function helpRow(selected = "overview", withEmoji = true) {
+function helpRow(selected = "overview", withEmoji = true, userId = "") {
   return new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder()
-      .setCustomId("spanter:help")
+      .setCustomId(`spanter:help:${userId}`)
       .setPlaceholder("Select a category")
       .addOptions(helpOptions(selected, withEmoji))
   );
 }
 
+async function refuseOther(interaction) {
+  await interaction.reply({
+    embeds: [embed("Not Yours", "Only the person who opened this can change it.")],
+    flags: MessageFlags.Ephemeral
+  }).catch(() => null);
+}
+
 async function sendHelp(message, prefix) {
   const payload = (withEmoji) => ({
     embeds: [renderHelp("overview", prefix, message.member)],
-    components: [helpRow("overview", withEmoji)]
+    components: [helpRow("overview", withEmoji, message.author.id)]
   });
   try {
     return await message.reply(payload(true));
@@ -434,14 +442,25 @@ async function sendHelp(message, prefix) {
   }
 }
 
+function helpOwner(customId) {
+  const id = String(customId || "");
+  if (!id.startsWith("spanter:help:")) return "";
+  return id.slice("spanter:help:".length);
+}
+
 async function handleInteraction(interaction) {
   if (!interaction?.customId) return false;
   const prefix = store.getPrefix(interaction.guildId || interaction.guild?.id);
-  if (interaction.customId === "spanter:help") {
+  if (interaction.customId === "spanter:help" || interaction.customId.startsWith("spanter:help:")) {
+    const ownerId = helpOwner(interaction.customId);
+    if (ownerId && interaction.user?.id && ownerId !== interaction.user.id) {
+      await refuseOther(interaction);
+      return true;
+    }
     const category = interaction.values?.[0] || "overview";
     const payload = (withEmoji) => ({
       embeds: [renderHelp(category, prefix, interaction.member)],
-      components: [helpRow(category, withEmoji)]
+      components: [helpRow(category, withEmoji, ownerId || interaction.user?.id || "")]
     });
     try {
       await interaction.update(payload(true));
@@ -450,10 +469,10 @@ async function handleInteraction(interaction) {
     }
     return true;
   }
-  if (interaction.customId === "spanter:force") {
+  if (interaction.customId === "spanter:force" || interaction.customId.startsWith("spanter:force:")) {
     return force.handleSelect(interaction, prefix);
   }
-  if (interaction.customId === "spanter:vouch") {
+  if (interaction.customId === "spanter:vouch" || interaction.customId.startsWith("spanter:vouch:")) {
     const panel = require("./panel");
     return panel.handleSelect(interaction, prefix);
   }

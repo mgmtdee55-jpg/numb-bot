@@ -13,6 +13,7 @@ const channels = require("./channels");
 const modsetup = require("./modsetup");
 const afk = require("../afk");
 const extras = require("../extras");
+const { resolveMember, resolveRole } = require("../vouch/resolve");
 
 const RANK_COMMANDS = new Set(access.VOICE_COMMANDS);
 
@@ -33,30 +34,6 @@ function audit(message, action, targetId, reason) {
     targetId: targetId || null,
     reason
   });
-}
-
-async function resolveMember(message, argument) {
-  const id = String(argument || "").replace(/[<@!>]/g, "");
-  if (/^\d{17,20}$/.test(id)) {
-    return message.guild.members.cache.get(id) || await message.guild.members.fetch(id).catch(() => null);
-  }
-  const name = String(argument || "").toLowerCase();
-  if (!name) return null;
-  return [...message.guild.members.cache.values()].find((member) => {
-    return member.user?.username?.toLowerCase() === name || member.displayName?.toLowerCase() === name;
-  }) || null;
-}
-
-async function resolveRole(message, argument) {
-  const mentioned = message.mentions?.roles?.first?.() || message.mentions?.roles?.values?.().next?.().value;
-  if (mentioned) return mentioned;
-  const id = String(argument || "").replace(/[<@&>]/g, "");
-  if (/^\d{17,20}$/.test(id)) {
-    return message.guild.roles.cache.get(id) || await message.guild.roles.fetch(id).catch(() => null);
-  }
-  const name = String(argument || "").trim().toLowerCase();
-  if (!name) return null;
-  return [...message.guild.roles.cache.values()].find((role) => role.name.toLowerCase() === name) || null;
 }
 
 function wholeNumber(raw, max) {
@@ -132,7 +109,7 @@ function voiceRankInfo(message, member) {
 
 async function clearVoiceRank(message, member) {
   if (!access.canAssignRanks(message.member)) return deny(message, "Only Gods and the server owner can remove VC ranks.");
-  if (!member) return reply(message, "Missing User", "Mention a member or provide their user ID.");
+  if (!member) return replyUsage(message, "unrank");
   const row = store.getRank(message.guild.id, member.id);
   if (!row && !access.voiceRankKey(member)) return reply(message, "No Rank", `<@${member.id}> does not have a VC rank.`);
   for (const id of store.voiceRoleIds(message.guild.id)) await takeVoiceRole(member, id);
@@ -143,7 +120,12 @@ async function clearVoiceRank(message, member) {
 async function handleVoiceRank(message, args) {
   const sub = (args[1] || "").toLowerCase();
   if (sub === "unrank") return clearVoiceRank(message, await resolveMember(message, args[2]));
-  if (sub === "rankinfo") return voiceRankInfo(message, await resolveMember(message, args[2]) || message.member);
+  if (sub === "rankinfo") {
+    if (!args[2]) return voiceRankInfo(message, message.member);
+    const member = await resolveMember(message, args[2]);
+    if (!member) return replyUsage(message, "rankinfo");
+    return voiceRankInfo(message, member);
+  }
   const action = (args[2] || "list").toLowerCase();
   if (action === "assign") {
     const member = await resolveMember(message, args[3]);
@@ -156,7 +138,8 @@ async function handleVoiceRank(message, args) {
 async function bindVoiceRole(message, rankKey, roleArg) {
   if (!access.canAssignRanks(message.member)) return deny(message, "Only Gods and the server owner can set VC rank roles.");
   const role = await resolveRole(message, roleArg);
-  if (!role || role.id === message.guild.id || role.managed) return reply(message, "Missing Role", "Mention a role that I can manage.");
+  if (!role) return replyUsage(message, "vcrole");
+  if (role.id === message.guild.id || role.managed) return reply(message, "Invalid Role", "Choose a normal server role the bot can manage.");
   store.setVoiceRole(message.guild.id, rankKey, role.id);
   const rank = access.rankByKey(rankKey);
   return reply(message, "Voice Rank Role Set", `**${rank.label}** is now <@&${role.id}>. Unauthorized adds are reversed.`);
@@ -172,7 +155,7 @@ async function handleGod(message, args) {
   }
   if (sub === "add" || sub === "take" || sub === "info") {
     const member = await resolveMember(message, args[2]);
-    if (!member) return reply(message, "Missing User", "Mention a member or provide their user ID.");
+    if (!member) return replyUsage(message, "god");
     if (sub === "info") {
       const row = store.getGodmode(message.guild.id, member.id);
       const rank = access.rankByKey(store.getRank(message.guild.id, member.id)?.rank_key);
@@ -191,13 +174,7 @@ async function handleGod(message, args) {
     if (!store.removeGodmode(message.guild.id, member.id)) return reply(message, "No Godmode", `<@${member.id}> does not have Godmode.`);
     return reply(message, "Godmode Removed", `<@${member.id}> no longer has Godmode.`);
   }
-  return reply(message, "Godmode", [
-    "`-god add @user` — give Godmode",
-    "`-god take @user` — remove Godmode",
-    "`-god info @user` — view Godmode status",
-    "",
-    "VC ranks use `-vc rank assign @user <plus|premium|premium plus>`."
-  ].join("\n"));
+  return replyUsage(message, "god");
 }
 
 async function handleManagement(message, args, prefix) {
@@ -207,7 +184,7 @@ async function handleManagement(message, args, prefix) {
       return deny(message, "Management cannot grant or remove Management access. Gods and the server owner can.");
     }
     const member = await resolveMember(message, args[2]);
-    if (!member) return reply(message, "Missing User", "Mention a member or provide their user ID.");
+    if (!member) return replyUsage(message, "management");
     if (sub === "add") {
       if (member.user?.bot) return reply(message, "Invalid Target", "Bots cannot receive Management.");
       const created = store.addManagement(message.guild.id, member.id, message.author.id);
@@ -244,7 +221,7 @@ async function handleRoleLimit(message, args) {
   }
   if (action === "remove") {
     const role = await resolveRole(message, args.slice(3).join(" "));
-    if (!role) return reply(message, "Missing Role", "Mention a role or provide its ID.");
+    if (!role) return replyUsage(message, "rolelimit");
     if (!vouchStore.deleteLimitedRole(message.guild.id, role.id)) return reply(message, "No Limit", `${role.name} does not have a limit.`);
     await audit(message, "role_limit", role.id, `Removed the member cap from ${role.name}`);
     return reply(message, "Role Limit Removed", `${role.name} no longer has a member limit.`);
@@ -254,13 +231,13 @@ async function handleRoleLimit(message, args) {
     const max = wholeNumber(raw, MAX_ROLE_LIMIT);
     if (max == null) return reply(message, "Invalid Limit", `Provide a whole number from 0 to ${MAX_ROLE_LIMIT}.`);
     const role = await resolveRole(message, args.slice(3, -1).join(" "));
-    if (!role || role.id === message.guild.id) return reply(message, "Missing Role", "Mention a role or provide its ID.");
+    if (!role || role.id === message.guild.id) return replyUsage(message, "rolelimit");
     vouchStore.setLimitedRole(message.guild.id, role.id, max, message.author.id);
     await audit(message, "role_limit", role.id, `${role.name} capped at ${max}`);
     const count = roles.countMembersWithRole(message.guild, role.id);
     return reply(message, "Role Limit Set", `${role.name} is limited to **${max}** members. Current count: **${count}/${max}**.`);
   }
-  return reply(message, "Role Limits", "`-role limit set @role <#>`\n`-role limit remove @role`\n`-role limit view`");
+  return replyUsage(message, "rolelimit");
 }
 
 async function handleVouchLimit(message, args) {
@@ -284,7 +261,7 @@ async function handleVouchLimit(message, args) {
   }
   if (scope === "remove") {
     const member = await resolveMember(message, args[4]);
-    if (!member) return reply(message, "Missing User", "Mention the member whose override should be removed.");
+    if (!member) return replyUsage(message, "vouchlimitremove");
     if (!vouchStore.clearAllowance(message.guild.id, member.id)) return reply(message, "No Override", `<@${member.id}> does not have a vouch limit override.`);
     await audit(message, "limit_reset", member.id, "User vouch cap removed");
     return reply(message, "Override Removed", `<@${member.id}> now uses the global or giver cap.`);
@@ -312,9 +289,7 @@ async function handleVouchLimit(message, args) {
 async function handleStaff(message, tierKey, args, prefix) {
   const tier = access.staffByKey(tierKey);
   const action = (args[1] || "").toLowerCase();
-  if (action !== "add" && action !== "remove" && action !== "take") {
-    return reply(message, tier.label, `\`${prefix}${tier.command} add @user\`\n\`${prefix}${tier.command} remove @user\``);
-  }
+  if (action !== "add" && action !== "remove" && action !== "take") return replyUsage(message, tier.command);
   if (!access.canGrantStaff(message.member, tier.key)) {
     const who = tier.key === "god"
       ? "Only the server owner can add or remove God."
@@ -324,7 +299,7 @@ async function handleStaff(message, tierKey, args, prefix) {
     return deny(message, who);
   }
   const member = await resolveMember(message, args[2]);
-  if (!member || member.user?.bot) return reply(message, "Missing User", "Mention a human member or provide their user ID.");
+  if (!member || member.user?.bot) return replyUsage(message, tier.command);
   if (member.id === message.guild.ownerId) return reply(message, "Server Owner", "The server owner is above the staff tiers.");
   const current = store.getStaff(message.guild.id, member.id);
   if (action === "remove" || action === "take") {
@@ -368,7 +343,7 @@ async function handleAntinuke(message, args, prefix) {
       return deny(message, "Only the server owner can add or remove Anti-Nuke admins.");
     }
     const member = await resolveMember(message, args[3]);
-    if (!member) return reply(message, "Missing User", "Mention a member or provide their user ID.");
+    if (!member) return replyUsage(message, "antinukeadmin");
     if (action === "add") {
       const created = store.addAntinukeAdmin(message.guild.id, member.id, message.author.id);
       if (created) await audit(message, "antinuke_admin_add", member.id, "Anti-Nuke admin added");
@@ -449,7 +424,9 @@ async function handleInfo(message, name, args) {
       `**Roles:** ${guild.roles.cache.size}`
     ].join("\n"));
   }
-  const member = await resolveMember(message, args[1]) || message.member;
+  const named = String(args[1] || "").trim();
+  const member = named ? await resolveMember(message, args[1]) : message.member;
+  if (!member) return replyUsage(message, name === "avatar" ? "avatar" : name === "banner" ? "banner" : "userinfo");
   const info = await showUser(message, member);
   if (name === "avatar") return imageReply(message, "Avatar", info.avatar, "This user has no avatar.");
   if (name === "banner") return imageReply(message, "Banner", info.banner, "This user has no banner.");
@@ -481,7 +458,7 @@ async function handleGrant(message, args, prefix, removing) {
   }
   if (!removing && (sub === "list" || sub === "ls")) {
     const member = args[2] ? await resolveMember(message, args[2]) : null;
-    if (args[2] && !member) return reply(message, "Missing User", "Mention the member whose grants you want to see.");
+    if (args[2] && !member) return replyUsage(message, "grant");
     const rows = member
       ? store.listCommandGrantsForUser(message.guild.id, member.id)
       : store.listCommandGrants(message.guild.id);
@@ -528,9 +505,7 @@ async function handleVoiceShield(message, args, prefix) {
   }
   const removing = sub === "remove" || sub === "off";
   const member = await resolveMember(message, removing ? args[2] : args[1]);
-  if (!member) {
-    return reply(message, "Voice Shield", `\`${prefix}voiceshield @user\`\n\`${prefix}voiceshield remove @user\``);
-  }
+  if (!member) return replyUsage(message, "voiceshield");
   if (member.user?.bot) return reply(message, "Invalid Target", "Bots cannot hold voice shield.");
   if (removing) {
     const removed = store.removeVoiceShield(message.guild.id, member.id);

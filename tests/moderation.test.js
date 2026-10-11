@@ -360,6 +360,30 @@ test("foreverban is owner-tier and cannot be lifted with unban", async () => {
   assert.equal(db.isForeverbanned(guild.id, target.id), false);
 });
 
+test("a higher role cannot be banned, and the same role still can", async () => {
+  const guild = makeGuild("hierarchy-guild");
+  const owner = makeMember(guild, "888000000000000001", { owner: true });
+  const modRole = { id: "role-hier-mod", name: "Mods", position: 5 };
+  const staff = asGod(makeMember(guild, "888000000000000002", { roles: [modRole] }));
+  const peer = makeMember(guild, "888000000000000003", { roles: [{ id: "role-hier-same", name: "Same", position: 5 }] });
+  const boss = makeMember(guild, "888000000000000004", { roles: [{ id: "role-hier-high", name: "High", position: 9 }] });
+  db.addFakePermission(guild.id, modRole.id, "ban_members");
+
+  const higher = makeMessage(guild, `-ban ${boss.id}`, staff);
+  await handleCommand(higher, null, "-");
+  assert.equal(title(higher), "Unable to Ban");
+  assert.match(description(higher), /higher role/);
+  assert.equal(guild.banCalls.length, 0);
+
+  const equal = makeMessage(guild, `-ban ${peer.id} even`, staff);
+  await handleCommand(equal, null, "-");
+  assert.equal(title(equal), "Member Banned");
+
+  const ownerBan = makeMessage(guild, `-ban ${boss.id} owner`, owner);
+  await handleCommand(ownerBan, null, "-");
+  assert.equal(title(ownerBan), "Member Banned");
+});
+
 test("bare ban and a bad ban show the usage card", async () => {
   const guild = makeGuild("ban-usage");
   const owner = makeMember(guild, "777000000000000001", { owner: true, username: "y.dm" });
@@ -379,6 +403,12 @@ test("bare ban and a bad ban show the usage card", async () => {
   const wrong = makeMessage(guild, "-ban nobody", owner);
   await handleCommand(wrong, null, "-");
   assert.match(description(wrong), /\*\*Command:\*\* ban/);
+
+  const named = makeMember(guild, "777000000000000009", { username: "kutt" });
+  const byName = makeMessage(guild, "-ban kutt spam", owner);
+  await handleCommand(byName, null, "-");
+  assert.equal(title(byName), "Member Banned");
+  assert.equal(guild.banCalls.at(-1).userId, named.id);
 });
 
 test("ban accepts message days and a silent flag", async () => {

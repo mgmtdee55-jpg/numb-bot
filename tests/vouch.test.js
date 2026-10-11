@@ -462,7 +462,9 @@ test("prefix and aliases persist in sqlite and aliases expand to vouch commands"
 
   const expanded = makeMessage(group.guild, "!vg", group.giver);
   await handleCommand(expanded, group.guild.client, "!");
-  assert.equal(titleOf(expanded), "Vouch Config");
+  assert.match(textOf(expanded), /\*\*Command:\*\* antinuke vouch/);
+  assert.match(expanded.replies[0].embeds[0].data.footer.text, /^Command 1\//);
+  assert.equal(expanded.replies[0].components[0].components.length, 3);
   const listed = makeMessage(group.guild, "!alias list", group.owner);
   await handleCommand(listed, group.guild.client, "!");
   assert.match(textOf(listed), /!vg/);
@@ -476,6 +478,7 @@ test("help opens on overview and the vouch category lists the vouch commands", a
   assert.match(textOf(help), /Your rank: Member/);
   assert.match(textOf(help), /menu below/);
   const menu = help.replies[0].components[0].toJSON().components[0];
+  assert.equal(menu.custom_id, `spanter:help:${group.plain.id}`);
   const overview = menu.options.find((option) => option.value === "overview");
   assert.equal(overview.emoji.id, "1555789384140328960");
   assert.equal(overview.emoji.name, "YOUR_CUSTOM_EMOJI_ID");
@@ -483,8 +486,10 @@ test("help opens on overview and the vouch category lists the vouch commands", a
   assert.ok(menu.options.some((option) => option.value === "force"));
 
   const interaction = {
-    customId: "spanter:help",
+    customId: `spanter:help:${group.plain.id}`,
     values: ["vouch"],
+    user: { id: group.plain.id },
+    member: group.plain,
     guildId: group.guild.id,
     guild: group.guild,
     async update(payload) { this.updated = payload; }
@@ -497,8 +502,10 @@ test("help opens on overview and the vouch category lists the vouch commands", a
   assert.doesNotMatch(description, /forcenickname/);
 
   const forceInteraction = {
-    customId: "spanter:help",
+    customId: `spanter:help:${group.plain.id}`,
     values: ["force"],
+    user: { id: group.plain.id },
+    member: group.plain,
     guildId: group.guild.id,
     guild: group.guild,
     async update(payload) { this.updated = payload; }
@@ -506,6 +513,44 @@ test("help opens on overview and the vouch category lists the vouch commands", a
   await vouch.handleInteraction(forceInteraction);
   assert.match(forceInteraction.updated.embeds[0].data.description, /forcenickname/);
   assert.match(forceInteraction.updated.embeds[0].data.description, /rolestrip/);
+
+  const stranger = {
+    customId: `spanter:help:${group.plain.id}`,
+    values: ["moderation"],
+    user: { id: group.owner.id },
+    member: group.owner,
+    guildId: group.guild.id,
+    guild: group.guild,
+    async update(payload) { this.updated = payload; },
+    async reply(payload) { this.repliedWith = payload; }
+  };
+  assert.equal(await vouch.handleInteraction(stranger), true);
+  assert.equal(stranger.updated, undefined);
+  assert.match(stranger.repliedWith.embeds[0].data.description, /Not Yours/);
+});
+
+test("forcenickname stops at the same role and at a higher role", async () => {
+  const group = cast();
+  await authorize(group);
+  const lower = await run(group.guild, group.os, `-forcenickname ${TARGET} Quiet`);
+  assert.equal(titleOf(lower), "Forced Nickname");
+
+  const peer = makeRole("222000000000000099", "Peer", [], 8);
+  group.guild.roles.cache.set(peer.id, peer);
+  group.plain.roles.cache.set(peer.id, peer);
+  const same = await run(group.guild, group.os, `-forcenickname ${PLAIN} Quiet`);
+  assert.equal(titleOf(same), "Unable to Force");
+  assert.match(textOf(same), /same role/);
+
+  const high = makeRole("222000000000000098", "High", [], 12);
+  group.guild.roles.cache.set(high.id, high);
+  group.other.roles.cache.set(high.id, high);
+  const above = await run(group.guild, group.os, `-forcenickname ${OTHER} Quiet`);
+  assert.equal(titleOf(above), "Unable to Force");
+  assert.match(textOf(above), /higher/);
+
+  const ownerNick = await run(group.guild, group.owner, `-forcenickname ${OTHER} Boss`);
+  assert.equal(titleOf(ownerNick), "Forced Nickname");
 });
 
 test("force management blocks roles and restores forced nicknames without a punishment loop", async () => {

@@ -167,6 +167,44 @@ function canModerate(member) {
   return aboveStaff(member) || hasStaff(member, "god");
 }
 
+function rolePosition(member) {
+  let highest = Number(member?.roles?.highest?.position);
+  if (!Number.isFinite(highest)) highest = 0;
+  for (const role of member?.roles?.cache?.values?.() || []) {
+    if (!role || role.id === member.guild?.id) continue;
+    const position = Number(role.position) || 0;
+    if (position > highest) highest = position;
+  }
+  return highest;
+}
+
+function moderateRefusal(actor, target) {
+  if (!target) return null;
+  if (!actor || actor.id === target.id) return "You cannot moderate yourself.";
+  const ownerId = actor.guild?.ownerId || target.guild?.ownerId;
+  if (target.id === ownerId) return "The server owner cannot be moderated.";
+  if (actor.id === ownerId) return null;
+  if (rolePosition(target) > rolePosition(actor)) return "You cannot moderate someone with a higher role than you.";
+  return null;
+}
+
+function forceRefusal(actor, target) {
+  if (!actor || !target || actor.id === target.id) return "You cannot do that to yourself.";
+  const ownerId = actor.guild?.ownerId || target.guild?.ownerId;
+  if (target.id === ownerId && actor.id !== ownerId) return "Only the server owner can do that to the owner.";
+  if (actor.id === ownerId) return null;
+  if (rolePosition(target) >= rolePosition(actor)) return "You cannot do that to someone with the same role as you or a higher one.";
+  return null;
+}
+
+function canModerateTarget(actor, target) {
+  return !moderateRefusal(actor, target);
+}
+
+function canForceTarget(actor, target) {
+  return !forceRefusal(actor, target);
+}
+
 function canUseForce(member, command) {
   if (command && hasCommandGrant(member, command)) return true;
   return aboveStaff(member) || hasStaff(member, "founder");
@@ -365,6 +403,10 @@ module.exports = {
   canUseLogs,
   canUseChannels,
   canModerate,
+  canModerateTarget,
+  canForceTarget,
+  moderateRefusal,
+  forceRefusal,
   canUseForce,
   canConfigureBot,
   canRestart,

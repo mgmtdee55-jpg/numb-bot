@@ -32,10 +32,10 @@ function forceCooldown(message, action) {
   return reply(message, "Please Wait", cooldowns.waitText(wait));
 }
 
-function panelRow() {
+function panelRow(userId = "") {
   return new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder()
-      .setCustomId("spanter:force")
+      .setCustomId(`spanter:force:${userId}`)
       .setPlaceholder("Force Management")
       .addOptions(
         { label: "Overview", value: "overview", description: "What this panel controls" },
@@ -60,10 +60,20 @@ async function openPanel(message, prefix) {
   if (!access.canUseForce(message.member, "forcemanage")) {
     return reply(message, "Not Allowed", "Only Founders, Gods, and the server owner can use Force Management.");
   }
-  return message.reply({ embeds: [panelEmbed(prefix)], components: [panelRow()] });
+  return message.reply({ embeds: [panelEmbed(prefix)], components: [panelRow(message.author.id)] });
 }
 
 async function handleSelect(interaction, prefix) {
+  const ownerId = String(interaction.customId || "").startsWith("spanter:force:")
+    ? interaction.customId.slice("spanter:force:".length)
+    : "";
+  if (ownerId && interaction.user?.id && ownerId !== interaction.user.id) {
+    await interaction.reply({
+      embeds: [embed("Not Yours", "Only the person who opened this can change it.")],
+      flags: MessageFlags.Ephemeral
+    }).catch(() => null);
+    return true;
+  }
   const member = interaction.member;
   if (member && !member.guild && interaction.guild) member.guild = interaction.guild;
   if (!access.canUseForce(member, "forcemanage")) {
@@ -74,7 +84,7 @@ async function handleSelect(interaction, prefix) {
     return true;
   }
   const section = interaction.values?.[0] || "overview";
-  await interaction.update({ embeds: [panelEmbed(prefix, section)], components: [panelRow()] });
+  await interaction.update({ embeds: [panelEmbed(prefix, section)], components: [panelRow(ownerId || interaction.user?.id || "")] });
   return true;
 }
 
@@ -83,9 +93,8 @@ async function forceNickname(message, userArg, nickname) {
   if (!userArg || !String(nickname || "").trim()) return replyUsage(message, "forcenickname");
   const member = await resolveMember(message, userArg);
   if (!member || member.user?.bot) return replyUsage(message, "forcenickname");
-  if (member.id === message.guild.ownerId && message.member.id !== message.guild.ownerId) {
-    return reply(message, "Protected User", "Only the server owner can force the owner's nickname.");
-  }
+  const forced = access.forceRefusal(message.member, member);
+  if (forced) return reply(message, "Unable to Force", forced);
   const name = String(nickname || "").trim().replace(/\s+/g, " ");
   if (!name || name.length > NICK_LIMIT) {
     return reply(message, "Invalid Nickname", `Provide a nickname up to ${NICK_LIMIT} characters.`);
@@ -113,6 +122,8 @@ async function unforceNickname(message, userArg) {
   const member = await resolveMember(message, userArg);
   const userId = member?.id || await resolveUserId(message, userArg);
   if (!userId) return replyUsage(message, "unforcenickname");
+  const cleared = member && access.forceRefusal(message.member, member);
+  if (cleared) return reply(message, "Unable to Force", cleared);
   if (!store.getForcedNick(message.guild.id, userId)) {
     return reply(message, "No Forced Nickname", "That user does not have a forced nickname.");
   }
@@ -147,9 +158,8 @@ async function forceRoleStrip(message, userArg, roleArg) {
   const role = await resolveRole(message, roleArg);
   if (!member || member.user?.bot || !role) return replyUsage(message, "forcestrip");
   if (!role || role.id === message.guild.id) return reply(message, "Invalid Role", "Mention a role, role ID, or role name.");
-  if (member.id === message.guild.ownerId && message.member.id !== message.guild.ownerId) {
-    return reply(message, "Protected User", "Only the server owner can block roles on the owner.");
-  }
+  const blocked = access.forceRefusal(message.member, member);
+  if (blocked) return reply(message, "Unable to Force", blocked);
   const wait = forceCooldown(message, "forcerolestrip");
   if (wait) return wait;
   store.addForcedRoleStrip(message.guild.id, member.id, role.id, message.author.id);
@@ -176,7 +186,10 @@ async function forceRoleStrip(message, userArg, roleArg) {
 async function unforceRoleStrip(message, userArg) {
   if (!access.canUseForce(message.member, "unforcerolestrip")) return reply(message, "Not Allowed", "Only Founders, Gods, and the server owner can clear role blocks.");
   const userId = await resolveUserId(message, userArg);
-  if (!userId) return reply(message, "Missing User", "Mention a user or provide their user ID.");
+  if (!userId) return replyUsage(message, "unforcerolestrip");
+  const member = await resolveMember(message, userArg);
+  const cleared = member && access.forceRefusal(message.member, member);
+  if (cleared) return reply(message, "Unable to Force", cleared);
   const existing = store.listForcedRoleStrips(message.guild.id, userId);
   if (!existing.length) {
     return reply(message, "No Role Blocks", "That user has no forced role strips.");
@@ -241,7 +254,8 @@ async function deliver(message, pending, title, description) {
 async function stripRoleFromEveryone(message, roleArg) {
   if (!access.canUseForce(message.member, "rolestrip")) return reply(message, "Not Allowed", "Only Founders, Gods, and the server owner can strip a role from everyone.");
   const role = await resolveRole(message, roleArg);
-  if (!role || role.id === message.guild.id) return reply(message, "Invalid Role", "Mention a role, role ID, or role name.");
+  if (!role) return replyUsage(message, "rolestrip");
+  if (role.id === message.guild.id || role.managed) return reply(message, "Invalid Role", "Choose a normal server role.");
   const wait = forceCooldown(message, "rolestrip");
   if (wait) return wait;
   if (!roles.botCanManageRole(message.guild, role)) {
@@ -301,9 +315,9 @@ async function stripRoleFromEveryone(message, roleArg) {
 async function dispatchForceStrip(message, first, second) {
   if (!first) return replyUsage(message, "forcestrip");
   if (second) return forceRoleStrip(message, first, second);
-  if (/^<@!?\d+>$/.test(first)) return replyUsage(message, "forcestrip");
   const role = await resolveRole(message, first);
-  if (role) return stripRoleFromEveryone(message, first);
+  const member = await resolveMember(message, first);
+  if (role && !member) return stripRoleFromEveryone(message, first);
   return replyUsage(message, "forcestrip");
 }
 

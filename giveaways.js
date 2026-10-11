@@ -6,6 +6,7 @@ const protection = require("./vouch/protection");
 const { ACCENT } = require("./vouch/constants");
 const { reply } = require("./vouch/ui");
 const { replyUsage } = require("./usage");
+const { resolveMember: findMember, resolveRole: findRole } = require("./vouch/resolve");
 
 connection.exec(`
 CREATE TABLE IF NOT EXISTS giveaways (
@@ -271,7 +272,7 @@ async function setHost(message, args, prefix) {
   const action = (args[0] || "").toLowerCase();
   if (action === "add" || action === "remove") {
     const member = await resolveMember(message, args.slice(1).join(" "));
-    if (!member) return reply(message, "Missing User", `\`${prefix}set gw host add @user\``);
+    if (!member) return replyUsage(message, "gwhost");
     const roleId = statements.getRole.get(message.guild.id)?.role_id;
     if (action === "remove") {
       statements.removeHost.run(message.guild.id, member.id);
@@ -293,19 +294,11 @@ async function setHost(message, args, prefix) {
 }
 
 async function resolveMember(message, argument) {
-  const id = String(argument || "").replace(/[<@!>]/g, "");
-  if (!/^\d{17,20}$/.test(id)) return null;
-  return message.guild.members.cache.get(id) || await message.guild.members.fetch(id).catch(() => null);
+  return findMember(message, argument);
 }
 
 async function resolveRole(message, argument) {
-  const mentioned = message.mentions?.roles?.first?.();
-  if (mentioned) return mentioned;
-  const id = String(argument || "").replace(/[<@&>]/g, "");
-  if (/^\d{17,20}$/.test(id)) return message.guild.roles.cache.get(id) || null;
-  const name = String(argument || "").trim().toLowerCase();
-  if (!name) return null;
-  return [...message.guild.roles.cache.values()].find((role) => role.name.toLowerCase() === name) || null;
+  return findRole(message, argument);
 }
 
 async function handleCommand(message, args, prefix) {

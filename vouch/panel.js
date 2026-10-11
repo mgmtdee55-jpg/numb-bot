@@ -1,4 +1,4 @@
-const { ActionRowBuilder, StringSelectMenuBuilder } = require("discord.js");
+const { ActionRowBuilder, MessageFlags, StringSelectMenuBuilder } = require("discord.js");
 const { embed } = require("./ui");
 
 function pages(prefix) {
@@ -32,10 +32,10 @@ function pages(prefix) {
   };
 }
 
-function panelRow(selected = "overview") {
+function panelRow(selected = "overview", userId = "") {
   return new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder()
-      .setCustomId("spanter:vouch")
+      .setCustomId(`spanter:vouch:${userId}`)
       .setPlaceholder("Vouch")
       .addOptions(
         { label: "Vouch", value: "overview", description: "Give and take vouches", default: selected === "overview" },
@@ -51,12 +51,22 @@ function panelEmbed(prefix, section = "overview") {
 }
 
 function openPanel(message, prefix) {
-  return message.reply({ embeds: [panelEmbed(prefix)], components: [panelRow()] });
+  return message.reply({ embeds: [panelEmbed(prefix)], components: [panelRow("overview", message.author.id)] });
 }
 
 async function handleSelect(interaction, prefix) {
+  const ownerId = String(interaction.customId || "").startsWith("spanter:vouch:")
+    ? interaction.customId.slice("spanter:vouch:".length)
+    : "";
+  if (ownerId && interaction.user?.id && ownerId !== interaction.user.id) {
+    await interaction.reply({
+      embeds: [embed("Not Yours", "Only the person who opened this can change it.")],
+      flags: MessageFlags.Ephemeral
+    }).catch(() => null);
+    return true;
+  }
   const section = interaction.values?.[0] || "overview";
-  await interaction.update({ embeds: [panelEmbed(prefix, section)], components: [panelRow(section)] });
+  await interaction.update({ embeds: [panelEmbed(prefix, section)], components: [panelRow(section, ownerId || interaction.user?.id || "")] });
   return true;
 }
 

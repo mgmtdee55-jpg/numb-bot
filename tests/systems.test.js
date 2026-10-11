@@ -246,6 +246,13 @@ test("franchise can force ownership and a lower rank cannot", async () => {
   assert.equal(titleOf(override), "Voice Override");
   const drag = await run(guild, member, "-dragall");
   assert.equal(titleOf(drag), "Rank Required");
+  const stsu = await run(guild, member, "-stsu");
+  assert.match(textOf(stsu), /\*\*Command:\*\* stsu/);
+  assert.match(textOf(stsu), /stsu \(user\)/);
+  const named = makeMember(guild, "111000000000000030", { name: "kutt" });
+  const muted = await run(guild, member, "-stsu kutt");
+  assert.equal(titleOf(muted), "STSU");
+  assert.match(textOf(muted), new RegExp(named.id));
 
   db.forceOwner(channel.id, owner.id);
   owner.voice.channel = channel;
@@ -285,7 +292,8 @@ test("dragall moves only the named channel and muteall stays in the current call
   assert.match(textOf(missing), /\*\*Command:\*\* dragall/);
   assert.match(textOf(missing), /dragall \(channel\)/);
   const unnamed = await run(guild, founder, "-dragall lobby");
-  assert.equal(titleOf(unnamed), "Missing Channel");
+  assert.match(textOf(unnamed), /\*\*Command:\*\* dragall/);
+  assert.match(textOf(unnamed), /dragall \(channel\)/);
   assert.equal(pulledA.voice.channelId, source.id);
   assert.equal(bystander.voice.channelId, other.id);
 
@@ -352,7 +360,7 @@ test("antinuke vouch commands use the existing vouch behavior", async () => {
 
   const panel = await run(guild, member, "-vouch");
   assert.equal(embedTitle(panel.replies[0].embeds[0]), "Vouch");
-  assert.equal(panel.replies[0].components[0].toJSON().components[0].custom_id, "spanter:vouch");
+  assert.equal(panel.replies[0].components[0].toJSON().components[0].custom_id, `spanter:vouch:${member.id}`);
 
   const set = await run(guild, owner, `-antinuke vouch set ${reward.id}`);
   assert.equal(titleOf(set), "Reward Role Set");
@@ -547,7 +555,7 @@ test("showallcommands pages one category at a time", async () => {
   assert.ok(first.description.split("\n").length <= 12);
   assert.match(first.description, /`-ban`/);
   const menu = shown.replies[0].components[0].toJSON().components[0];
-  assert.equal(menu.custom_id, "spanter:commands:cat");
+  assert.equal(menu.custom_id, `spanter:commands:cat:${member.id}`);
   assert.equal(menu.options[0].label, "Moderation");
   assert.equal(menu.options[0].default, true);
   const buttons = shown.replies[0].components[1].components;

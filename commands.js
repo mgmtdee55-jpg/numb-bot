@@ -9,6 +9,7 @@ const moderation = require("./moderation");
 const vouch = require("./vouch");
 const { card } = require("./feedback");
 const { replyUsage } = require("./usage");
+const { resolveMember: findMember } = require("./vouch/resolve");
 const cooldowns = require("./systems/cooldowns");
 
 function embed(title, description, guild) {
@@ -20,14 +21,7 @@ function ownerOnly(message) {
 }
 
 async function resolveMember(message, argument) {
-  const mentioned = message.mentions.members.first();
-  if (mentioned) return mentioned;
-  const id = (argument || "").replace(/[<@!>]/g, "");
-  if (!/^\d{17,20}$/.test(id)) return null;
-  return message.guild.members.fetch(id).catch((error) => {
-    if (error.code === 10007) return null;
-    throw error;
-  });
+  return findMember(message, argument);
 }
 
 const systems = require("./systems");

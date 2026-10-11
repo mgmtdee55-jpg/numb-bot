@@ -10,7 +10,6 @@ process.env.DB_PATH = path.join(scratch, "vc.sqlite");
 process.env.PREFIX = "-";
 process.env.npm_lifecycle_event = "test";
 
-const db = require("../db");
 const { handleCommand } = require("../commands");
 const extras = require("../extras");
 
@@ -251,7 +250,7 @@ test("auditlog pages each side without dropping the other direction", async () =
   assert.equal(button(next.updated, "Voice").data.style, ButtonStyle.Primary);
 });
 
-test("auditlog is limited to gods and view audit log, and the bot must be able to read it", async () => {
+test("auditlog is open to everyone, and the bot must be able to read it", async () => {
   const guild = makeGuild([]);
   const member = {
     id: MEMBER,
@@ -260,16 +259,11 @@ test("auditlog is limited to gods and view audit log, and the bot must be able t
     roles: { cache: new Map([[ROLE, { id: ROLE }]]) },
     permissions: { has: () => false }
   };
-  const denied = message(guild, `-auditlog ${USER}`, member);
-  await handleCommand(denied, null, "-");
-  assert.match(denied.replies[0].embeds[0].data.description, /Access Denied/);
-  assert.equal(guild.calls.length, 0);
-
-  db.addFakePermission(guild.id, ROLE, "view_audit_log");
   const allowed = message(guild, `-auditlog ${USER}`, member);
   await handleCommand(allowed, null, "-");
   assert.equal(allowed.replies[0].embeds[0].data.title, "Audit Log");
   assert.match(text(allowed.replies[0]), /No recent server mutes, deafens, or disconnects/);
+  assert.ok(guild.calls.length > 0);
 
   const blocked = makeGuild([], {
     me: { permissions: { has: (bit) => bit !== PermissionFlagsBits.ViewAuditLog } }

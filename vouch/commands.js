@@ -4,6 +4,7 @@ const help = require("./help");
 const force = require("./force");
 const panel = require("./panel");
 const { reply } = require("./ui");
+const { replyUsage } = require("../usage");
 
 function commandName(args, prefix) {
   const head = String(args[0] || "").toLowerCase();
@@ -42,9 +43,8 @@ async function handleSetrole(message, args, prefix) {
   return reply(message, "Setrole", `\`${prefix}setrole stripstaff @role\`\n\`${prefix}setrole stripstaff remove\``);
 }
 
-async function handleAntinukeVouch(message, args, prefix) {
+async function handleAntinukeVouch(message, args) {
   const action = (args[2] || "").toLowerCase();
-  if (!action) return service.showVouchConfig(message);
   if (action === "set") return service.bindRewardRole(message, args.slice(3).join(" "));
   if (action === "founder") return service.setFounderRole(message, args.slice(3).join(" "));
   if (action === "unset") return service.unsetLinkedRoles(message);
@@ -52,17 +52,7 @@ async function handleAntinukeVouch(message, args, prefix) {
   if (action === "removegiver") return service.removeGiver(message, args[3], args.slice(4).join(" "));
   if (action === "list") return service.listVouches(message, args[3]);
   if (action === "cleanup") return service.cleanupRegistry(message);
-  return reply(message, "Vouch", [
-    `\`${prefix}antinuke vouch\` — view vouch config`,
-    `\`${prefix}antinuke vouch set <role>\``,
-    `\`${prefix}antinuke vouch founder <role>\``,
-    `\`${prefix}antinuke vouch unset\``,
-    `\`${prefix}antinuke vouch addgiver <user>\``,
-    `\`${prefix}antinuke vouch removegiver <user>\``,
-    `\`${prefix}antinuke vouch list\``,
-    `\`${prefix}antinuke vouch cleanup\``,
-    `\`${prefix}antinuke vouch limit global <#>\``
-  ].join("\n"));
+  return replyUsage(message, "antinukevouch");
 }
 
 async function handleCommand(message, args, prefix) {

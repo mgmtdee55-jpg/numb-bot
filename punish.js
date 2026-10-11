@@ -476,7 +476,7 @@ async function syncMember(before, after) {
 }
 
 async function toggleRole(message, member, column, label) {
-  if (!member) return reply(message, "Missing User", "Mention a member.");
+  if (!member) return replyUsage(message, "cmute");
   const config = getConfig(message.guild.id);
   const roleId = config[column];
   const role = roleId && (message.guild.roles.cache.get(roleId) || await message.guild.roles.fetch(roleId).catch(() => null));
@@ -501,7 +501,7 @@ async function jail(message, member, reason) {
   const config = getConfig(message.guild.id);
   const role = config.jail_role_id && message.guild.roles.cache.get(config.jail_role_id);
   if (!role || !config.jail_channel_id) return reply(message, "Setup Needed", "Run `-serversetup` and set the jail role and jail channel.");
-  if (!member) return reply(message, "Missing User", "Mention the member you want to jail.");
+  if (!member) return replyUsage(message, "jail");
   if (member.id === message.guild.ownerId) return reply(message, "Unable to Jail", "The server owner cannot be jailed.");
   if (member.user?.bot) return reply(message, "Unable to Jail", "I can't jail a bot.");
   if (statements.getJail.get(message.guild.id, member.id)) return reply(message, "Already Jailed", `<@${member.id}> is already in jail. Use \`-unjail\`.`);
@@ -551,7 +551,7 @@ async function unjail(message, member) {
 }
 
 async function serverMute(message, member) {
-  if (!member) return reply(message, "Missing User", "Mention someone who is in a voice channel.");
+  if (!member) return replyUsage(message, "servermute");
   if (!member.voice?.channelId || typeof member.voice.setMute !== "function") {
     return reply(message, "Not In Voice", "They have to be in a voice channel. A normal unmute still works after this.");
   }
@@ -561,7 +561,7 @@ async function serverMute(message, member) {
 }
 
 async function askMute(message, member) {
-  if (!member) return reply(message, "Missing User", "Mention the member you want to mute.");
+  if (!member) return replyUsage(message, "mute");
   const expires = Date.now() + CONFIRM_MS;
   const tail = `${member.id}:${message.author.id}:${expires}`;
   const row = new ActionRowBuilder().addComponents(
@@ -593,6 +593,11 @@ async function handleMuteButton(interaction) {
     author: { id: actorId },
     member: interaction.member
   };
+  const blocked = access.moderateRefusal(interaction.member, member);
+  if (blocked) {
+    await interaction.update({ embeds: [embed("Unable to Moderate", blocked)], components: [] });
+    return true;
+  }
   if (kind === "server") {
     if (!member?.voice?.channelId || typeof member.voice.setMute !== "function") {
       await interaction.update({ embeds: [embed("Not In Voice", "They have to be in a voice channel for a server mute.")], components: [] });
@@ -612,7 +617,7 @@ async function handleMuteButton(interaction) {
 }
 
 async function camBlacklist(message, member) {
-  if (!member) return reply(message, "Missing User", "Mention the member.");
+  if (!member) return replyUsage(message, "camblacklist");
   const config = getConfig(message.guild.id);
   const removed = await stripMatching(member, "cam", (role) => cameraRole(role, config.cam_role_id), "Camera blacklist");
   if (config.cam_blacklist_role_id) {
@@ -673,6 +678,11 @@ async function handleCommand(message, name, args) {
   const member = await resolveMember(message, args[1]);
   if (!member && usageName) {
     await replyUsage(message, usageName);
+    return true;
+  }
+  const blocked = access.moderateRefusal(message.member, member);
+  if (blocked) {
+    await reply(message, "Unable to Moderate", blocked);
     return true;
   }
   if (name === "jail") {

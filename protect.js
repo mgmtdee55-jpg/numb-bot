@@ -13,6 +13,7 @@ const roles = require("./vouch/roles");
 const { ACCENT } = require("./vouch/constants");
 const { reply } = require("./vouch/ui");
 const { replyUsage } = require("./usage");
+const { resolveMember: findMember, resolveRole: findRole } = require("./vouch/resolve");
 const { logThrottledError } = require("./log-throttle");
 
 connection.exec(`
@@ -174,29 +175,45 @@ function idFrom(raw) {
   return /^\d{17,20}$/.test(id) ? id : null;
 }
 
-function targetsFrom(message, args) {
+function addMentioned(collection, found) {
+  if (!collection || typeof collection.values !== "function") return;
+  for (const item of collection.values()) {
+    if (item?.id) found.set(item.id, item);
+  }
+}
+
+async function lookupId(cache, fetch, id) {
+  const cached = cache?.get?.(id) || null;
+  if (cached || typeof fetch !== "function") return cached;
+  return fetch(id).catch(() => null);
+}
+
+async function targetsFrom(message, args) {
   const rolesFound = new Map();
   const usersFound = new Map();
-  const mentionedRoles = message.mentions?.roles;
-  if (mentionedRoles && typeof mentionedRoles.values === "function") {
-    for (const role of mentionedRoles.values()) rolesFound.set(role.id, role);
-  }
-  const mentionedMembers = message.mentions?.members;
-  if (mentionedMembers && typeof mentionedMembers.values === "function") {
-    for (const member of mentionedMembers.values()) usersFound.set(member.id, member);
-  }
-  for (const part of args.slice(1).join(" ").split(/[,\s]+/)) {
+  addMentioned(message.mentions?.roles, rolesFound);
+  addMentioned(message.mentions?.members, usersFound);
+  const parts = args.slice(1).join(" ").split(/[,\s]+/).map((part) => part.trim()).filter(Boolean);
+  for (const part of parts) {
     const id = idFrom(part);
-    if (!id || rolesFound.has(id) || usersFound.has(id)) continue;
-    const role = message.guild.roles.cache.get(id);
-    if (role) {
-      rolesFound.set(role.id, role);
+    if (id) {
+      if (rolesFound.has(id) || usersFound.has(id)) continue;
+      const role = await lookupId(message.guild.roles.cache, message.guild.roles.fetch, id);
+      if (role && role.id !== message.guild.id) {
+        rolesFound.set(role.id, role);
+        continue;
+      }
+      const member = await lookupId(message.guild.members.cache, message.guild.members.fetch, id);
+      if (member) usersFound.set(member.id, member);
+      else usersFound.set(id, { id, unresolved: true });
       continue;
     }
-    const member = message.guild.members.cache.get(id);
+    const role = await findRole(message, part);
+    const member = await findMember(message, part);
+    if (role && role.id !== message.guild.id) rolesFound.set(role.id, role);
     if (member) usersFound.set(member.id, member);
-    else usersFound.set(id, { id, unresolved: true });
   }
+  if (rolesFound.has(message.guild.id)) rolesFound.delete(message.guild.id);
   return { roles: [...rolesFound.values()], users: [...usersFound.values()] };
 }
 
@@ -293,7 +310,7 @@ async function protectUsers(message, userList) {
     if (!member || member.user?.bot) continue;
     members.push(member);
   }
-  if (!members.length) return reply(message, "Missing User", "Mention a member or paste their ID. `-protect @user`");
+  if (!members.length) return replyUsage(message, "protect");
   const mine = ownedRoles(message.guild.id, message.author.id);
   if (!mine.length) {
     const token = saveSession({
@@ -372,7 +389,10 @@ async function handleCommand(message, name, args) {
   if (name === "plist" || name === "protectedlist") return listAll(message);
   if (name === "protected") return listMine(message);
   if (name !== "protect") return false;
-  const found = targetsFrom(message, args);
+  if (!canAssignRoles(message.member)) {
+    return reply(message, "Access Denied", "Only Gods and the server owner can protect someone.");
+  }
+  const found = await targetsFrom(message, args);
   if (found.roles.length && found.users.length) return replyUsage(message, "protect");
   if (found.roles.length) return protectRoles(message, found.roles);
   if (found.users.length) return protectUsers(message, found.users);

@@ -11,9 +11,7 @@ const { ACCENT } = require("./vouch/constants");
 const { card } = require("./feedback");
 const { reply } = require("./vouch/ui");
 const { replyUsage } = require("./usage");
-const access = require("./systems/access");
-const { hasFakePermission } = require("./fake-permissions");
-
+const { resolveMember } = require("./vouch/resolve");
 const PAGE_SIZE = 6;
 const SCAN_PAGES = 2;
 const CACHE_MS = 60_000;
@@ -34,10 +32,6 @@ const TYPES = {
 };
 
 const cache = new Map();
-
-function canView(member) {
-  return access.canUseLogs(member) || hasFakePermission(member, "view_audit_log");
-}
 
 function botCanRead(guild) {
   const permissions = guild?.members?.me?.permissions;
@@ -306,27 +300,20 @@ function parseId(customId) {
 }
 
 async function resolveUser(message, argument) {
-  const id = String(argument || "").replace(/[<@!>]/g, "");
+  const token = String(argument || "").trim();
+  if (!token) return null;
+  const id = token.replace(/[<@!>]/g, "");
   if (/^\d{17,20}$/.test(id)) {
-    const member = message.guild.members?.cache?.get(id) || await message.guild.members?.fetch?.(id).catch(() => null);
+    const member = await resolveMember(message, id);
     if (member?.user) return member.user;
     const user = await message.client?.users?.fetch?.(id).catch(() => null);
     return user || { id };
   }
-  const mentioned = message.mentions?.users?.first?.() || message.mentions?.members?.first?.()?.user;
-  if (mentioned?.id) return mentioned;
-  const name = String(argument || "").trim().toLowerCase();
-  if (!name) return null;
-  const member = [...(message.guild.members?.cache?.values?.() || [])].find((item) => (
-    item.user?.username?.toLowerCase() === name || item.displayName?.toLowerCase() === name
-  ));
+  const member = await resolveMember(message, token);
   return member?.user || null;
 }
 
 async function show(message, argument) {
-  if (!canView(message.member)) {
-    return reply(message, "Access Denied", "Gods and people with view audit log can use this.");
-  }
   const user = await resolveUser(message, argument);
   if (!user?.id) return replyUsage(message, "auditlog");
   if (!botCanRead(message.guild)) {
@@ -357,10 +344,6 @@ async function handleButton(interaction) {
   if (!parsed) return false;
   if (interaction.user?.id !== parsed.invokerId) {
     await ephemeral(interaction, "Not Yours", "Only the person who ran this can use these buttons.");
-    return true;
-  }
-  if (!canView(interaction.member)) {
-    await ephemeral(interaction, "Access Denied", "Gods and people with view audit log can use this.");
     return true;
   }
   if (!botCanRead(interaction.guild)) {

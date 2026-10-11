@@ -71,9 +71,7 @@ async function addGiver(message, userArg) {
   const actor = message.member;
   if (!authority.canManageGivers(actor)) return deny(message);
   const member = await resolveMember(message, userArg);
-  if (!isHumanMember(member, message.guild)) {
-    return reply(message, "Missing User", "Mention a human member or provide their user ID.");
-  }
+  if (!isHumanMember(member, message.guild)) return replyUsage(message, "vouchgiver");
   if (store.isBlacklisted(message.guild.id, member.id)) {
     return reply(message, "Vouch Blacklisted", `${mentionUser(member.id)} is vouch blacklisted and cannot become a giver.`);
   }
@@ -101,7 +99,7 @@ async function removeGiver(message, userArg, reason) {
   const actor = message.member;
   if (!authority.canManageGivers(actor)) return deny(message);
   const userId = await resolveUserId(message, userArg);
-  if (!userId) return reply(message, "Missing User", "Mention a user or provide their user ID.");
+  if (!userId) return replyUsage(message, "vouchgiver");
   const member = message.guild.members.cache.get(userId) || null;
   if (!authority.outranks(actor, userId, member)) return deny(message, "You can only remove givers below your authority.");
   const removed = store.removeGiver(message.guild.id, userId, actor.id, cleanReason(reason) || "Giver permission removed");
@@ -129,7 +127,7 @@ async function giveVouch(message, userArg, reasonText) {
   if (!authority.canGive(actor)) return deny(message, "You are not allowed to give vouches.");
 
   const target = await resolveMember(message, userArg);
-  if (!target) return reply(message, "Missing User", "Mention a server member or provide their user ID.");
+  if (!target) return replyUsage(message, "vouchgive");
   if (!isHumanMember(target, guild)) return reply(message, "Invalid Target", "Vouches can only be given to a human member.");
   if (target.id === actor.id) return reply(message, "Invalid Target", "You cannot vouch for yourself.");
   if (store.isBlacklisted(guild.id, target.id)) {
@@ -206,7 +204,7 @@ async function takeVouch(message, userArg, reasonText) {
     return reply(message, "Vouch Blacklisted", "You are vouch blacklisted and cannot manage vouches.");
   }
   const userId = await resolveUserId(message, userArg);
-  if (!userId) return reply(message, "Missing User", "Mention a user or provide their user ID.");
+  if (!userId) return replyUsage(message, "vouchtake");
   const active = store.getActiveVouch(guild.id, userId);
   if (!active) return reply(message, "No Active Vouch", `${mentionUser(userId)} does not have an active vouch.`);
   const isGiverOfRecord = active.giver_id === actor.id && authority.canGive(actor);
@@ -252,7 +250,7 @@ async function allowAdmin(message, userArg) {
   const actor = message.member;
   if (!authority.canManageAdmins(actor)) return deny(message, "Only OS and the server owner can add vouch admins.");
   const member = await resolveMember(message, userArg);
-  if (!isHumanMember(member, message.guild)) return reply(message, "Missing User", "Mention a human member or provide their user ID.");
+  if (!isHumanMember(member, message.guild)) return replyUsage(message, "vouchadmin");
   if (store.isBlacklisted(message.guild.id, member.id)) {
     return reply(message, "Vouch Blacklisted", `${mentionUser(member.id)} is vouch blacklisted and cannot become a vouch admin.`);
   }
@@ -272,7 +270,7 @@ async function removeAdmin(message, userArg, reasonText) {
   const actor = message.member;
   if (!authority.canManageAdmins(actor)) return deny(message, "Only OS and the server owner can remove vouch admins.");
   const userId = await resolveUserId(message, userArg);
-  if (!userId) return reply(message, "Missing User", "Mention a user or provide their user ID.");
+  if (!userId) return replyUsage(message, "vouchadmin");
   const member = message.guild.members.cache.get(userId) || null;
   if (!authority.outranks(actor, userId, member)) return deny(message, "You cannot change someone at or above your authority.");
   const reason = cleanReason(reasonText) || "Vouch admin removed";
@@ -291,7 +289,7 @@ async function setUserLimit(message, userArg, rawLimit) {
   const actor = message.member;
   if (!authority.canManageGivers(actor)) return deny(message);
   const userId = await resolveUserId(message, userArg);
-  if (!userId) return reply(message, "Missing User", "Mention a user or provide their user ID.");
+  if (!userId) return replyUsage(message, "vouchlimituser");
   const member = message.guild.members.cache.get(userId) || null;
   if (actor.id !== userId && !authority.outranks(actor, userId, member)) {
     return deny(message, "You can only change allowances for people below your authority.");
@@ -318,7 +316,7 @@ async function clearUserLimit(message, userArg) {
   const actor = message.member;
   if (!authority.canManageGivers(actor)) return deny(message);
   const userId = await resolveUserId(message, userArg);
-  if (!userId) return reply(message, "Missing User", "Mention a user or provide their user ID.");
+  if (!userId) return replyUsage(message, "vouchlimitremove");
   const member = message.guild.members.cache.get(userId) || null;
   if (actor.id !== userId && !authority.outranks(actor, userId, member)) {
     return deny(message, "You can only change allowances for people below your authority.");
@@ -338,7 +336,7 @@ async function addBlacklist(message, userArg, reasonText) {
   const actor = message.member;
   if (!authority.canManageGivers(actor)) return deny(message);
   const userId = await resolveUserId(message, userArg);
-  if (!userId) return reply(message, "Missing User", "Mention a user or provide their user ID.");
+  if (!userId) return replyUsage(message, "vouchblacklist");
   const member = message.guild.members.cache.get(userId) || await message.guild.members.fetch(userId).catch(() => null);
   if (member?.user?.bot || userId === message.guild.client?.user?.id) {
     return reply(message, "Invalid Target", "Bots cannot be vouch blacklisted.");
@@ -363,7 +361,7 @@ async function removeBlacklist(message, userArg) {
   const actor = message.member;
   if (!authority.canManageGivers(actor)) return deny(message);
   const userId = await resolveUserId(message, userArg);
-  if (!userId) return reply(message, "Missing User", "Mention a user or provide their user ID.");
+  if (!userId) return replyUsage(message, "vouchblacklist");
   if (!store.removeBlacklist(message.guild.id, userId)) {
     return reply(message, "Not Blacklisted", `${mentionUser(userId)} is not on the vouch blacklist.`);
   }
@@ -405,6 +403,7 @@ async function usableRole(message, role) {
 async function setVouchRole(message, roleArg) {
   if (!authority.isOsOrOwner(message.member)) return deny(message, "Only OS and the server owner can set the vouch role.");
   const role = await resolveRole(message, roleArg);
+  if (!role) return replyUsage(message, "vouchsetrole");
   if (!(await usableRole(message, role))) return null;
   store.setVouchRole(message.guild.id, role.id);
   await logging.record(message.guild, {
@@ -430,6 +429,7 @@ async function clearVouchRole(message) {
 
 async function setRewardRole(message, roleArg) {
   if (!authority.isOsOrOwner(message.member)) return deny(message, "Only OS and the server owner can set the reward role.");
+  if (!String(roleArg || "").trim()) return replyUsage(message, "vouchreward");
   if (String(roleArg || "").toLowerCase() === "remove") {
     store.setRewardRole(message.guild.id, null);
     await logging.record(message.guild, {
@@ -440,7 +440,7 @@ async function setRewardRole(message, roleArg) {
     return reply(message, "Reward Role Cleared", "The reward role was removed. The vouch role was not changed.");
   }
   const role = await resolveRole(message, roleArg);
-  if (!role || role.id === message.guild.id) return reply(message, "Invalid Role", "Mention a role, role ID, or role name.");
+  if (!role || role.id === message.guild.id) return replyUsage(message, "vouchreward");
   const vouchRoleId = store.getConfig(message.guild.id).vouch_role_id;
   store.setRewardRole(message.guild.id, role.id);
   await logging.record(message.guild, {
@@ -467,7 +467,7 @@ async function setStripstaffRole(message, roleArg) {
     return reply(message, "Stripstaff Role Cleared", "Automatic permission stripping is unchanged. The optional legacy role was cleared.");
   }
   const role = await resolveRole(message, roleArg);
-  if (!role || role.id === message.guild.id) return reply(message, "Invalid Role", "Mention a role, role ID, or role name.");
+  if (!role || role.id === message.guild.id) return replyUsage(message, "stripstaff");
   store.setStripstaffRole(message.guild.id, role.id);
   await logging.record(message.guild, {
     action: "config_change",
@@ -578,7 +578,7 @@ async function wipeAll(message) {
 async function stripGiver(message, userArg) {
   if (!authority.isOsOrOwner(message.member)) return deny(message, "Only OS and the server owner can strip a giver's vouches.");
   const userId = await resolveUserId(message, userArg);
-  if (!userId) return reply(message, "Missing User", "Mention a user or provide their user ID.");
+  if (!userId) return replyUsage(message, "vouchstrip");
   const rows = store.deactivateByGiver(message.guild.id, userId, message.author.id, "vouchstrip");
   if (!rows.length) return reply(message, "Nothing to Strip", `${mentionUser(userId)} has no active vouches.`);
   const role = await roleById(message.guild, store.getConfig(message.guild.id).vouch_role_id);
@@ -606,7 +606,7 @@ async function setRoleLimit(message, tokens) {
   const max = parseLimit(rawNumber, MAX_ROLE_LIMIT);
   if (max == null) return reply(message, "Invalid Limit", `Provide a whole number from 0 to ${MAX_ROLE_LIMIT}.`);
   const role = await resolveRole(message, tokens.slice(0, -1).join(" "));
-  if (!role || role.id === message.guild.id) return reply(message, "Invalid Role", "Mention a role, role ID, or role name.");
+  if (!role || role.id === message.guild.id) return replyUsage(message, "limit");
   store.setLimitedRole(message.guild.id, role.id, max, message.author.id);
   const count = roles.countMembersWithRole(message.guild, role.id);
   await logging.record(message.guild, {
@@ -655,7 +655,7 @@ function statusLines(guild, info) {
 
 async function showCheck(message, userArg) {
   const userId = userArg ? await resolveUserId(message, userArg) : message.author.id;
-  if (!userId) return reply(message, "Missing User", "Mention a user or provide their user ID.");
+  if (!userId) return replyUsage(message, "vouchcheck");
   const member = message.guild.members.cache.get(userId) || null;
   const info = authority.profile(message.guild, userId, member);
   return reply(message, "Vouch Status", statusLines(message.guild, info).join("\n"));
@@ -663,7 +663,7 @@ async function showCheck(message, userArg) {
 
 async function showView(message, userArg) {
   const userId = await resolveUserId(message, userArg);
-  if (!userId) return reply(message, "Missing User", "Mention a user or provide their user ID.");
+  if (!userId) return replyUsage(message, "vouchview");
   const member = message.guild.members.cache.get(userId) || null;
   const info = authority.profile(message.guild, userId, member);
   const givenLines = info.given.length
@@ -718,6 +718,7 @@ async function showVouchConfig(message) {
 async function bindRewardRole(message, roleArg) {
   if (!authority.isOsOrOwner(message.member)) return deny(message, "Only OS and the server owner can set the reward role.");
   const role = await resolveRole(message, roleArg);
+  if (!role) return replyUsage(message, "vouchreward");
   if (!(await usableRole(message, role))) return null;
   store.setVouchRole(message.guild.id, role.id);
   await logging.record(message.guild, {
@@ -733,7 +734,7 @@ async function bindRewardRole(message, roleArg) {
 async function setFounderRole(message, roleArg) {
   if (!authority.canManageAdmins(message.member)) return deny(message, "Only OS and the server owner can assign the founder role.");
   const role = await resolveRole(message, roleArg);
-  if (!role || role.id === message.guild.id) return reply(message, "Missing Role", "Mention a role or provide its ID.");
+  if (!role || role.id === message.guild.id) return replyUsage(message, "vouchfounder");
   const previous = store.getConfig(message.guild.id).founder_role_id;
   if (previous && previous !== role.id) store.removeOs(message.guild.id, previous, "role");
   store.setFounderRole(message.guild.id, role.id);

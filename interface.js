@@ -13,6 +13,7 @@ const { renderVoiceChannelInterface } = require("./voice");
 const { consumeActionCooldown } = require("./action-cooldowns");
 const access = require("./systems/access");
 const { logThrottledError } = require("./log-throttle");
+const { usageEmbed, SPECS } = require("./usage");
 const { card } = require("./feedback");
 
 function result(title, description, guild) {
@@ -401,7 +402,7 @@ async function transferOwnership(message, target) {
     return message.reply(result("Owner Only", "Only the current owner can transfer this voice channel."));
   }
   if (!target) {
-    return message.reply(result("Missing User", "Mention the member you want to give this channel to."));
+    return message.reply({ embeds: [usageEmbed(message, SPECS.vctransfer)] });
   }
   if (target.user?.bot) {
     return message.reply(result("Invalid Target", "Bots cannot own a voice channel."));

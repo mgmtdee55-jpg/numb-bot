@@ -15,6 +15,7 @@ const {
 const access = require("./systems/access");
 const { card } = require("./feedback");
 const { replyUsage } = require("./usage");
+const { resolveMember: findMember, resolveRole: findRole } = require("./vouch/resolve");
 
 const ACCENT = 0x2b2d31;
 const tempbanTimers = new Map();
@@ -95,29 +96,19 @@ function recordHistory(guildId, userId, action, reason, moderatorId) {
 }
 
 async function resolveRole(message, argument) {
-  const mention = message.mentions?.roles?.first?.();
-  if (mention) return mention;
-  const raw = String(argument || "").replace(/[<@&>]/g, "");
-  if (/^\d{17,20}$/.test(raw)) {
-    return message.guild.roles.cache.get(raw) || message.guild.roles.fetch(raw).catch(() => null);
-  }
-  const name = String(argument || "").toLowerCase();
-  return [...message.guild.roles.cache.values()].find((role) => role.name.toLowerCase() === name) || null;
+  return findRole(message, argument);
 }
 
 async function resolveUserId(message, argument) {
-  const mentioned = message.mentions?.users?.first?.() || message.mentions?.members?.first?.()?.user;
-  if (mentioned) return mentioned.id;
-  const raw = String(argument || "").replace(/[<@!>]/g, "");
+  const token = String(argument || "").trim();
+  if (!token) return null;
+  const raw = token.replace(/[<@!>]/g, "");
   if (/^\d{17,20}$/.test(raw)) return raw;
-  const query = String(argument || "").toLowerCase();
-  if (!query) return null;
-  const member = [...message.guild.members.cache.values()].find((item) => (
-    item.user?.username?.toLowerCase() === query || item.displayName?.toLowerCase() === query
-  ));
-  if (member) return member.id;
+  const member = await findMember(message, token);
+  if (member?.id) return member.id;
+  const query = token.toLowerCase();
   const bans = await message.guild.bans.fetch().catch(() => null);
-  const banned = bans && [...bans.values()].find((ban) => (
+  const banned = bans && [...(bans.values?.() || [])].find((ban) => (
     ban.user?.username?.toLowerCase() === query || ban.user?.globalName?.toLowerCase() === query
   ));
   return banned?.user?.id || null;
@@ -141,16 +132,10 @@ function canAssignRole(moderator, role) {
   return true;
 }
 
-function canModerate(moderator, targetMember) {
-  if (!targetMember) return true;
-  if (targetMember.id === moderator.guild.ownerId) return false;
-  if (targetMember.id === moderator.id) return false;
-  const modPos = moderator.roles?.highest?.position ?? 0;
-  const targetPos = targetMember.roles?.highest?.position ?? 0;
-  if (targetMember.roles?.highest && moderator.roles?.highest && targetPos >= modPos && moderator.id !== moderator.guild.ownerId) {
-    return false;
-  }
-  return true;
+function hierarchyBlock(message, title, target) {
+  const reason = access.moderateRefusal(message.member, target);
+  if (!reason) return null;
+  return reply(message, title, reason);
 }
 
 async function applyBan(guild, userId, { reason, purgeDays, moderatorId }) {
@@ -527,9 +512,8 @@ async function handleBan(message, args, prefix) {
   const userId = await resolveUserId(message, args[1]);
   if (!userId) return replyUsage(message, "ban");
   const target = await message.guild.members.fetch(userId).catch(() => null);
-  if (target && !canModerate(message.member, target)) {
-    return reply(message, "Unable to Ban", "You cannot ban that member.");
-  }
+  const banBlocked = target && hierarchyBlock(message, "Unable to Ban", target);
+  if (banBlocked) return banBlocked;
   if (!botCanBan(message.guild)) {
     return reply(message, "Bot Missing Permission", "I need the Discord **Ban Members** permission to do that.");
   }
@@ -574,9 +558,8 @@ async function handleHardban(message, args, prefix) {
   const userId = await resolveUserId(message, args[1]);
   if (!userId) return replyUsage(message, "hardban");
   const target = await message.guild.members.fetch(userId).catch(() => null);
-  if (target && !canModerate(message.member, target)) {
-    return reply(message, "Unable to Hardban", "You cannot hardban that member.");
-  }
+  const hardbanBlocked = target && hierarchyBlock(message, "Unable to Hardban", target);
+  if (hardbanBlocked) return hardbanBlocked;
   if (!botCanBan(message.guild)) {
     return reply(message, "Bot Missing Permission", "I need the Discord **Ban Members** permission to do that.");
   }
@@ -602,9 +585,8 @@ async function handleSoftban(message, args, prefix) {
   const userId = await resolveUserId(message, args[1]);
   if (!userId) return replyUsage(message, "softban");
   const target = await message.guild.members.fetch(userId).catch(() => null);
-  if (target && !canModerate(message.member, target)) {
-    return reply(message, "Unable to Softban", "You cannot softban that member.");
-  }
+  const softbanBlocked = target && hierarchyBlock(message, "Unable to Softban", target);
+  if (softbanBlocked) return softbanBlocked;
   const personalRefusal = require("./personal-ban").refusal(message, userId);
   if (personalRefusal) return personalRefusal;
   if (!botCanBan(message.guild)) {
@@ -627,9 +609,8 @@ async function handleTempban(message, args, prefix) {
   const duration = parseDuration(args[2]);
   if (!userId || !duration) return replyUsage(message, "tempban");
   const target = await message.guild.members.fetch(userId).catch(() => null);
-  if (target && !canModerate(message.member, target)) {
-    return reply(message, "Unable to Tempban", "You cannot tempban that member.");
-  }
+  const tempbanBlocked = target && hierarchyBlock(message, "Unable to Tempban", target);
+  if (tempbanBlocked) return tempbanBlocked;
   if (!botCanBan(message.guild)) {
     return reply(message, "Bot Missing Permission", "I need the Discord **Ban Members** permission to do that.");
   }
@@ -749,6 +730,8 @@ async function handleRole(message, args, prefix) {
   if (!userId || !role) return replyUsage(message, "role");
   const target = await message.guild.members.fetch(userId).catch(() => null);
   if (!target) return reply(message, "Unknown Member", "That member is not in this server.");
+  const roleBlocked = hierarchyBlock(message, "Unable to Moderate", target);
+  if (roleBlocked) return roleBlocked;
   if (!botCanManageRoles(message.guild)) {
     return reply(message, "Bot Missing Permission", "I need the Discord **Manage Roles** permission to do that.");
   }
@@ -783,9 +766,8 @@ async function handleForeverban(message, args, prefix) {
     return reply(message, "Unable to Foreverban", "The server owner cannot be foreverbanned.");
   }
   const target = await message.guild.members.fetch(userId).catch(() => null);
-  if (target && !isGuildOwner(message.member) && !canModerate(message.member, target)) {
-    return reply(message, "Unable to Foreverban", "You cannot foreverban that member.");
-  }
+  const foreverBlocked = target && hierarchyBlock(message, "Unable to Foreverban", target);
+  if (foreverBlocked) return foreverBlocked;
   if (!botCanBan(message.guild)) {
     return reply(message, "Bot Missing Permission", "I need the Discord **Ban Members** permission to do that.");
   }

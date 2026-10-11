@@ -2,6 +2,8 @@ const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require("
 const { connection } = require("./db");
 const { ACCENT } = require("./vouch/constants");
 const { reply } = require("./vouch/ui");
+const { replyUsage } = require("./usage");
+const { resolveMember } = require("./vouch/resolve");
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const WEEK_MS = 7 * DAY_MS;
@@ -323,25 +325,20 @@ function detailMessage(guildId, user, kind, page) {
 
 async function resolveUser(message, argument) {
   if (!argument) return message.author;
-  const mentioned = message.mentions?.users?.first?.() || message.mentions?.members?.first?.()?.user;
-  if (mentioned) return mentioned;
+  const member = await resolveMember(message, argument);
+  if (member?.user) return member.user;
+  if (member?.id) return member;
   const id = String(argument).replace(/[<@!>]/g, "");
   if (/^\d{17,20}$/.test(id)) {
-    const member = message.guild.members?.cache?.get(id) || await message.guild.members?.fetch?.(id).catch(() => null);
-    if (member?.user) return member.user;
     const user = await message.client?.users?.fetch?.(id).catch(() => null);
     return user || { id };
   }
-  const name = String(argument).toLowerCase();
-  const member = [...(message.guild.members?.cache?.values?.() || [])].find((item) => (
-    item.user?.username?.toLowerCase() === name || item.displayName?.toLowerCase() === name
-  ));
-  return member?.user || null;
+  return null;
 }
 
 async function showModstats(message, argument) {
   const user = await resolveUser(message, argument);
-  if (!user?.id) return reply(message, "Missing User", "Mention a user, or run `-modstats` for yourself.");
+  if (!user?.id) return replyUsage(message, "modstats");
   return message.reply(summaryMessage(message.guild.id, user));
 }
 
@@ -435,7 +432,7 @@ function activityMessage(guildId, user, now = Date.now()) {
 
 async function showViewstats(message, argument) {
   const user = await resolveUser(message, argument);
-  if (!user?.id) return reply(message, "Missing User", "Mention a user, or run `-viewstats` for yourself.");
+  if (!user?.id) return replyUsage(message, "viewstats");
   return message.reply(activityMessage(message.guild.id, user));
 }
 

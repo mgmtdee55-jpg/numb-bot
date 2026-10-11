@@ -9,6 +9,8 @@ const vouch = require("./vouch");
 const snipe = require("./snipe");
 const stats = require("./stats");
 const auditlog = require("./auditlog");
+const { resolveUserId } = require("./vouch/resolve");
+const { embed } = require("./vouch/ui");
 
 function commandName(args, prefix) {
   const head = String(args[0] || "").toLowerCase();
@@ -17,10 +19,7 @@ function commandName(args, prefix) {
 }
 
 async function resolveUser(message, argument) {
-  const mentioned = message.mentions?.members?.first?.() || message.mentions?.users?.first?.();
-  if (mentioned) return mentioned.id || mentioned.user?.id;
-  const id = String(argument || "").replace(/[<@!>]/g, "");
-  return /^\d{17,20}$/.test(id) ? id : null;
+  return resolveUserId(message, argument);
 }
 
 async function handleCommand(message, args, prefix) {
@@ -83,16 +82,35 @@ async function handleCommand(message, args, prefix) {
   return false;
 }
 
+async function refuseMenu(interaction) {
+  await interaction.reply({
+    embeds: [embed("Not Yours", "Only the person who opened this can change it.")],
+    flags: 64
+  }).catch(() => null);
+}
+
 async function handleInteraction(interaction) {
   const id = interaction.customId || "";
-  if (id === "spanter:commands:cat") {
+  if (id.startsWith("spanter:usage:")) return require("./usage").handleInteraction(interaction);
+  if (id.startsWith("spanter:commands:cat:")) {
+    const ownerId = id.slice("spanter:commands:cat:".length);
+    if (ownerId && interaction.user?.id && ownerId !== interaction.user.id) {
+      await refuseMenu(interaction);
+      return true;
+    }
     const index = Number(interaction.values?.[0] || 0);
     const prefix = vouch.getPrefix(interaction.guild.id);
     await interaction.update(catalog.pageMessage(prefix, index, interaction.member));
     return true;
   }
   if (id.startsWith("spanter:commands:")) {
-    const index = Number(id.slice("spanter:commands:".length));
+    const [ownerId, indexText] = id.slice("spanter:commands:".length).split(":");
+    if (indexText == null) return false;
+    if (ownerId && interaction.user?.id && ownerId !== interaction.user.id) {
+      await refuseMenu(interaction);
+      return true;
+    }
+    const index = Number(indexText);
     const prefix = vouch.getPrefix(interaction.guild.id);
     await interaction.update(catalog.pageMessage(prefix, index, interaction.member));
     return true;
