@@ -719,12 +719,112 @@ const SPECS = {
     description: "Show a member's banner.",
     syntax: "banner (user)",
     example: "banner kutt"
+  },
+  securityconfig: {
+    name: "securityconfig",
+    description: "Show security modules, which are on, and their thresholds.",
+    syntax: "securityconfig",
+    example: "securityconfig",
+    permission: "Server owner and Anti-Nuke admins"
+  },
+  dangerouspermissionsadd: {
+    name: "dangerouspermissionsadd",
+    description: "Ban and reverse an administrator permission added to a role.",
+    syntax: "dangerouspermissionsadd on|off",
+    example: "dpa on",
+    permission: "Server owner and Anti-Nuke admins"
+  },
+  dangerouspermissionsupdate: {
+    name: "dangerouspermissionsupdate",
+    description: "Ban and reverse dangerous permissions added to a role.",
+    syntax: "dangerouspermissionsupdate on|off",
+    example: "dpu on",
+    permission: "Server owner and Anti-Nuke admins"
+  },
+  vanityprotection: {
+    name: "vanityprotection",
+    description: "Restore the server vanity and ban whoever changed it.",
+    syntax: "vanityprotection on|off",
+    example: "vp on",
+    permission: "Server owner and Anti-Nuke admins"
+  },
+  denybotjoins: {
+    name: "denybotjoins",
+    description: "Ban bots that join and the member who added them.",
+    syntax: "denybotjoins on|off",
+    example: "dbj on",
+    permission: "Server owner and Anti-Nuke admins"
+  },
+  massmemberkick: {
+    name: "massmemberkick",
+    description: "Punish a member who kicks too many people in 8 seconds.",
+    syntax: "massmemberkick on|off|threshold (number)|punishment ban|kick|strip",
+    example: "mmk threshold 3",
+    permission: "Server owner and Anti-Nuke admins"
+  },
+  massmemberban: {
+    name: "massmemberban",
+    description: "Punish a member who bans too many people in 8 seconds.",
+    syntax: "massmemberban on|off|threshold (number)|punishment ban|kick|strip",
+    example: "mmb on",
+    permission: "Server owner and Anti-Nuke admins"
+  },
+  setwatchrole: {
+    name: "setwatchrole",
+    description: "Log when a role is given or removed.",
+    syntax: "setwatchrole (role)",
+    example: "setwatchrole @Staff",
+    permission: "Server owner and Anti-Nuke admins"
+  },
+  watchuser: {
+    name: "watchuser",
+    description: "Log moderation actions a member takes.",
+    syntax: "watchuser (user)",
+    example: "watchuser @user",
+    permission: "Server owner and Anti-Nuke admins"
+  },
+  verifiedseller: {
+    name: "verifiedseller",
+    description: "Set the one Verified Seller role, or view who has it.",
+    syntax: "verifiedseller (role)",
+    example: "verifiedseller @Verified Seller",
+    permission: "CEOs and the server owner"
+  },
+  verifiedselleradd: {
+    name: "verifiedseller add",
+    description: "Give someone the Verified Seller role. Create the role if it is not set.",
+    syntax: "verifiedseller add (user)",
+    example: "verifiedseller add @user",
+    permission: "CEOs and the server owner"
+  },
+  verifiedsellerremove: {
+    name: "verifiedseller remove",
+    description: "Remove a verified seller and take the role off them.",
+    syntax: "verifiedseller remove (user)",
+    example: "verifiedseller remove @user",
+    permission: "CEOs and the server owner"
+  },
+  verifiedselleraddgiver: {
+    name: "verifiedseller addgiver",
+    description: "Let verified sellers grant one command.",
+    syntax: "verifiedseller addgiver (command)",
+    example: "verifiedseller addgiver forcenickname",
+    permission: "CEOs and the server owner"
+  },
+  verifiedsellerremovegiver: {
+    name: "verifiedseller removegiver",
+    description: "Stop verified sellers from granting a command.",
+    syntax: "verifiedseller removegiver (command)",
+    example: "verifiedseller removegiver forcenickname",
+    permission: "CEOs and the server owner"
   }
 };
 
 const GROUPS = {
   ban: ["ban", "bancheck", "banpurge", "hardban", "softban", "tempban", "unban", "foreverban", "foreverunban"],
   protect: ["protect", "unprotect", "protected", "plist", "protectedlist"],
+  security: ["securityconfig", "dangerouspermissionsadd", "dangerouspermissionsupdate", "vanityprotection", "denybotjoins", "massmemberkick", "massmemberban", "setwatchrole", "watchuser"],
+  verifiedseller: ["verifiedseller", "verifiedselleradd", "verifiedsellerremove", "verifiedselleraddgiver", "verifiedsellerremovegiver"],
   proof: ["proof", "prooflist", "noproof"],
   godmode: ["godmode", "ungodmode"],
   god: ["god", "godtake", "godinfo"],

@@ -474,7 +474,7 @@ test("help opens on overview and the vouch category lists the vouch commands", a
   const group = cast();
   const help = await run(group.guild, group.plain, "-help");
   assert.equal(titleOf(help), "Categories");
-  assert.match(textOf(help), /VC Ranks — Voice Plus, Premium, and Premium Plus/);
+  assert.match(textOf(help), /Voice Management — VC, ranks, and voice tools/);
   assert.match(textOf(help), /Your rank: Member/);
   assert.match(textOf(help), /menu below/);
   const menu = help.replies[0].components[0].toJSON().components[0];
@@ -483,7 +483,8 @@ test("help opens on overview and the vouch category lists the vouch commands", a
   assert.equal(overview.emoji.id, "1555789384140328960");
   assert.equal(overview.emoji.name, "YOUR_CUSTOM_EMOJI_ID");
   assert.ok(menu.options.some((option) => option.value === "vouch"));
-  assert.ok(menu.options.some((option) => option.value === "force"));
+  assert.ok(menu.options.some((option) => option.value === "roles"));
+  assert.equal(menu.options.length, 6);
 
   const interaction = {
     customId: `spanter:help:${group.plain.id}`,
@@ -503,7 +504,7 @@ test("help opens on overview and the vouch category lists the vouch commands", a
 
   const forceInteraction = {
     customId: `spanter:help:${group.plain.id}`,
-    values: ["force"],
+    values: ["roles"],
     user: { id: group.plain.id },
     member: group.plain,
     guildId: group.guild.id,

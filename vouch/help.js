@@ -189,7 +189,31 @@ function ranksText() {
     "`-vc rankinfo` — your rank, or `@user` for theirs, including who assigned it",
     "`-voice plus @role` / `-voice premium @role` / `-vouch premium plus @role`",
     "",
-    "Only Gods can add or remove these roles, and only with the bot."
+    "Only Gods can add or remove these roles, and only with the bot.",
+    "Verified Sellers, CEOs, and the server owner can assign a rank with `-vc rank assign`."
+  ].join("\n");
+}
+
+function securityText(prefix) {
+  const p = prefix;
+  return [
+    "These modules act on the audit event. Vanity, dangerous permissions, and bot joins ban and reverse immediately. Mass kick and mass ban use the threshold you set.",
+    "The server owner, this bot, and Anti-Nuke admins are whitelisted.",
+    "",
+    `\`${p}securityconfig\` — modules, on or off, and thresholds`,
+    `\`${p}dangerouspermissionsadd on|off\` · \`${p}dpa\``,
+    `\`${p}dangerouspermissionsupdate on|off\` · \`${p}dpu\``,
+    `\`${p}vanityprotection on|off\` · \`${p}vp\``,
+    `\`${p}denybotjoins on|off\` · \`${p}dbj\``,
+    `\`${p}massmemberkick on|off\` · \`${p}mmk threshold <number>\` · \`${p}mmk punishment ban|kick|strip\``,
+    `\`${p}massmemberban on|off\` · \`${p}mmb threshold <number>\` · \`${p}mmb punishment ban|kick|strip\``,
+    "",
+    `\`${p}setwatchrole @role\` — log who gives or removes that role`,
+    `\`${p}unwatchrole @role\``,
+    `\`${p}watchuser @user\` — log moderation that member does`,
+    `\`${p}unwatchuser @user\``,
+    "",
+    "Turning a module on opens #security-events. The first watched role opens #watchlist. Only administrators can see those channels."
   ].join("\n");
 }
 
@@ -295,6 +319,7 @@ function protectionText(prefix) {
   const p = prefix;
   return [
     "Protect a role or a user. Only the person who protected it can remove that protection.",
+    "Verified Sellers can protect a role. Unprotect stays with Gods and the server owner.",
     "",
     "**Gods and the server owner**",
     `\`${p}protect @role\` — protect a role. You become its only owner.`,
@@ -341,36 +366,94 @@ function channelText(prefix) {
   ].join("\n");
 }
 
+function sellerText(prefix) {
+  const p = prefix;
+  return [
+    "Verified Seller sits under CEO / God and above Founder.",
+    "Only CEOs and the server owner can set the one role or add someone.",
+    "If anyone else gives that role, the bot removes it, kicks the person who gave it, and tells administrators.",
+    "",
+    "**CEOs and the server owner**",
+    `\`${p}verifiedseller @role\` — set the one role`,
+    `\`${p}verifiedseller add @user\` — make someone a verified seller`,
+    `\`${p}verifiedseller remove @user\` — remove a verified seller`,
+    `\`${p}verifiedseller addgiver <command>\` — let sellers grant that command`,
+    `\`${p}verifiedseller removegiver <command>\` — close that grant`,
+    "",
+    "**Verified Sellers**",
+    `\`${p}vc rank assign @user <rank>\``,
+    `\`${p}protect @role\``,
+    `\`${p}grant <command> @user\` — only commands opened with addgiver`
+  ].join("\n");
+}
+
+function catalogText(prefix, name) {
+  const category = require("./catalog").categories(prefix).find((item) => item.name === name);
+  return category?.value || "";
+}
+
+function fit(text) {
+  const lines = String(text || "").split("\n");
+  const kept = [];
+  let size = 0;
+  for (const line of lines) {
+    if (size + line.length + 1 > 3200 && kept.length) {
+      kept.push("", "The rest of this category is in `-showallcommands`.");
+      break;
+    }
+    kept.push(line);
+    size += line.length + 1;
+  }
+  return kept.join("\n");
+}
+
 const PAGES = {
   overview: {
     title: "Categories",
     body: [
-      "Moderation — Jail, mutes, bans, kicks, timeouts, warnings, purge",
-      "Info & Avatars — Avatar, banner, server info, user info",
-      "Voice / VC — VoiceMaster controls and VC command categories",
-      "Godmode — Godmode tiers and rank management",
-      "Protection — Protect a role or user, and remove it",
-      "VC Ranks — Voice Plus, Premium, and Premium Plus",
-      "AntiNuke — Protection modules and status commands",
-      "Channel Controls — Lock/unlock, hide/unhide, and full lockdown",
-      "Event Logging — Configure per-category event logs",
-      "Role Limits — Member and per-role limit commands",
+      "Moderation — Bans, security, staff, channels, logging, and the rest",
+      "Voice Management — VC, ranks, and voice tools",
       "Vouch — Vouches, giver access, roles, and limits",
-      "Management — Management access and Godmode administration",
-      "Staff Access — God, Founder, Boss, and administrator registry",
-      "Vanity — Status word and reward roles",
+      "Role Management — Role limits, protection, and force",
+      "Verified Seller — The seller role, rank assign, protect, and grants",
       "",
       "Use the menu below to open a category."
     ].join("\n")
   },
   vouch: { title: "Vouch", body: vouchText },
   force: { title: "Force Management", body: forceText },
-  moderation: { title: "Moderation", body: moderationText },
-  voice: { title: "Voice / VC", body: voiceText },
+  moderation: {
+    title: "Moderation",
+    body(prefix) {
+      return fit(catalogText(prefix, "Moderation"));
+    }
+  },
+  voice: {
+    title: "Voice Management",
+    body(prefix) {
+      return fit([
+        "Verified Sellers, CEOs, and the server owner can assign a VC rank.",
+        "",
+        catalogText(prefix, "Voice Management")
+      ].join("\n"));
+    }
+  },
+  roles: {
+    title: "Role Management",
+    body(prefix) {
+      return fit([
+        "Verified Sellers can protect a role. Unprotect stays with Gods and the server owner.",
+        "",
+        catalogText(prefix, "Role Management")
+      ].join("\n"));
+    }
+  },
+  seller: { title: "Verified Seller", body: sellerText },
   info: { title: "Info & Avatars", body: infoText },
   godmode: { title: "Godmode", body: godmodeText },
   ranks: { title: "VC Ranks", body: ranksText },
   antinuke: { title: "AntiNuke", body: antinukeText },
+  security: { title: "Security", body: securityText },
   logging: { title: "Event Logging", body: loggingText },
   rolelimits: { title: "Role Limits", body: roleLimitText },
   management: { title: "Management", body: managementText },
@@ -383,12 +466,15 @@ const PAGES = {
 
 const CATEGORY_ACCESS = {
   overview: "Everyone. Each category says who can use it.",
-  moderation: "Gods and above",
+  moderation: "Depends on the command. Gods and above for most moderation.",
   info: "Everyone",
-  voice: "Everyone. Ghost requires Voice Premium. Setup is the server owner.",
+  voice: "Everyone for their own VC. Verified Sellers, CEOs, and the server owner can assign ranks.",
+  roles: "Role limits and force follow staff ranks. Verified Sellers can protect a role.",
+  seller: "CEOs and the server owner manage the role. Verified Sellers assign ranks, protect a role, and grant opened commands.",
   godmode: "Gods and above",
   ranks: "Gods and Founders, or the VC rank listed on each command",
   antinuke: "Gods and above. Anti-Nuke admin changes are the server owner.",
+  security: "The server owner and Anti-Nuke admins.",
   channels: "Founders and above",
   logging: "Gods and above",
   rolelimits: "Gods and above",
@@ -416,22 +502,11 @@ function renderHelp(category, prefix, member) {
 function helpOptions(selected, withEmoji) {
   const options = [
     { label: "Categories", value: "overview", description: "Command groups" },
-    { label: "Moderation", value: "moderation", description: "Bans and fake permissions" },
-    { label: "Info & Avatars", value: "info", description: "Avatar, banner, server and user info" },
-    { label: "Voice / VC", value: "voice", description: "VoiceMaster controls" },
-    { label: "Godmode", value: "godmode", description: "Godmode access" },
-    { label: "VC Ranks", value: "ranks", description: "Plus, Premium, Premium Plus" },
-    { label: "AntiNuke", value: "antinuke", description: "Admins and vouch limits" },
-    { label: "Channel Controls", value: "channels", description: "Lock, hide, and lockdown" },
-    { label: "Event Logging", value: "logging", description: "Per-category event logs" },
-    { label: "Role Limits", value: "rolelimits", description: "Per-role member limits" },
+    { label: "Moderation", value: "moderation", description: "Bans, security, staff, and the rest" },
+    { label: "Voice Management", value: "voice", description: "VC, ranks, and voice tools" },
     { label: "Vouch", value: "vouch", description: "Vouches, givers, limits, blacklist" },
-    { label: "Management", value: "management", description: "Godmode administration" },
-    { label: "Staff Access", value: "staff", description: "God, Founder, and Boss" },
-    { label: "Force Management", value: "force", description: "Nicknames and role strips" },
-    { label: "Vanity", value: "vanity", description: "Status rewards" },
-    { label: "Protection", value: "protection", description: "Protect a role or user" },
-    { label: "Bot", value: "bot", description: "Prefix, aliases, restart" }
+    { label: "Role Management", value: "roles", description: "Limits, protection, and force" },
+    { label: "Verified Seller", value: "seller", description: "Seller role, assign, protect, grants" }
   ];
   return options.map((option) => {
     const data = { ...option, default: option.value === selected };

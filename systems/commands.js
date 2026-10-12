@@ -74,8 +74,8 @@ async function takeVoiceRole(member, roleId) {
 }
 
 async function assignVoiceRank(message, member, rank) {
-  if (!access.canAssignRanks(message.member)) {
-    return deny(message, "Only Gods and the server owner can assign VC ranks.");
+  if (!access.canAssignRanks(message.member) && !require("../verified-seller").isSeller(message.member)) {
+    return deny(message, "Only Verified Sellers, CEOs, and the server owner can assign VC ranks.");
   }
   if (!member || !rank) {
     return replyUsage(message, "vcrankassign");
@@ -449,10 +449,19 @@ async function handleInfo(message, name, args) {
 }
 
 async function handleGrant(message, args, prefix, removing) {
-  if (!access.canGrantCommands(message.member)) {
-    return deny(message, "Only Gods and the server owner can grant or revoke a single command.");
-  }
+  const sellers = require("../verified-seller");
+  const god = access.canGrantCommands(message.member);
   const sub = String(args[1] || "").trim().toLowerCase();
+  const named = access.canonicalCommand(sub);
+  const sellerGrant = !removing && sellers.isSeller(message.member) && named && sellers.canGive(message.guild.id, named);
+  if (!god && !sellerGrant) {
+    return deny(
+      message,
+      removing
+        ? "Only Gods and the server owner can revoke a command."
+        : "Only Gods, the server owner, and Verified Sellers authorized for that command can grant it."
+    );
+  }
   if (!removing && (!sub || sub === "help")) {
     return reply(message, "Command Grants", access.grantHelp(prefix));
   }
@@ -548,6 +557,8 @@ async function restart(message) {
 async function handleCommand(message, args, prefix) {
   const name = commandName(args, prefix);
   if (await extras.handleCommand(message, args, prefix)) return true;
+  if (await require("../security").handleCommand(message, name, args, prefix)) return true;
+  if (await require("../verified-seller").handleCommand(message, name, args, prefix)) return true;
   if (await require("../punish").handleCommand(message, name, args)) return true;
   if (name === "protect" || name === "unprotect" || name === "plist" || name === "protectedlist" || name === "protected") {
     await require("../protect").handleCommand(message, name, args, prefix);

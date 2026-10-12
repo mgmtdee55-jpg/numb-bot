@@ -67,6 +67,10 @@ function canAssignRoles(member) {
   return access.isServerOwner(member) || access.isGod(member);
 }
 
+function canProtectRole(member) {
+  return canAssignRoles(member) || require("./verified-seller").isSeller(member);
+}
+
 function roleRow(guildId, roleId) {
   return statements.role.get(String(guildId), String(roleId)) || null;
 }
@@ -260,8 +264,8 @@ function listMine(message) {
 }
 
 async function protectRoles(message, roleList) {
-  if (!canAssignRoles(message.member)) {
-    return reply(message, "Access Denied", "Only Gods and the server owner can protect a role.");
+  if (!canProtectRole(message.member)) {
+    return reply(message, "Access Denied", "Only Verified Sellers, CEOs, and the server owner can protect a role.");
   }
   const usable = roleList.filter((role) => role && role.id !== message.guild.id && !role.managed);
   if (!usable.length) return replyUsage(message, "protect");
@@ -502,12 +506,17 @@ async function handleCommand(message, name, args) {
     return replyUsage(message, "unprotect");
   }
   if (name !== "protect") return false;
+  const found = await targetsFrom(message, args);
+  if (found.roles.length && found.users.length) return replyUsage(message, "protect");
+  if (found.roles.length) {
+    if (!canProtectRole(message.member)) {
+      return reply(message, "Access Denied", "Only Verified Sellers, CEOs, and the server owner can protect a role.");
+    }
+    return protectRoles(message, found.roles);
+  }
   if (!canAssignRoles(message.member)) {
     return reply(message, "Access Denied", "Only Gods and the server owner can protect someone.");
   }
-  const found = await targetsFrom(message, args);
-  if (found.roles.length && found.users.length) return replyUsage(message, "protect");
-  if (found.roles.length) return protectRoles(message, found.roles);
   if (found.users.length) return protectUsers(message, found.users);
   return replyUsage(message, "protect");
 }

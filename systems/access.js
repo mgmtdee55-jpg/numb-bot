@@ -274,6 +274,11 @@ function voiceRankLabel(member) {
 function rankLine(member) {
   if (!member) return "Your rank: Member";
   if (isServerOwner(member)) return "Your rank: Guild Owner";
+  if (isGod(member)) {
+    const god = staffByKey("god");
+    return `Your rank: ${god.key} - ${god.title.toLowerCase()}`;
+  }
+  if (require("../verified-seller").isSeller(member)) return "Your rank: Verified Seller";
   const tier = staffByKey(staffTier(member));
   if (tier) return `Your rank: ${tier.key} - ${tier.title.toLowerCase()}`;
   const voice = voiceRankLabel(member);
@@ -359,6 +364,7 @@ function grantHelp(prefix = "-") {
     `\`${prefix}grant list @user\` — show one member`,
     "",
     "A grant is only that command. It does not give the rest of a rank or role.",
+    "Verified Sellers can grant a command only after a CEO or the server owner runs `-verifiedseller addgiver <command>`.",
     "",
     "**Gods and the server owner** — muteall, unmuteall",
     "**Voice** — forceownership, dragall, voicehistory, godmode, ungodmode, shield, unshield, voiceoverride, stsu, follow, chain, unfollow, bring, forceclaim, inspect",
@@ -376,6 +382,7 @@ function ladderText() {
     "**Voice Plus** — inspect",
     "",
     "Only Gods can add or remove these roles, and only with the bot.",
+    "Verified Sellers can assign a rank with `-vc rank assign`. Setting the roles and unrank stay with Gods and the server owner.",
     "Gods and the server owner can whitelist one command with `-grant <command> @user`."
   ].join("\n");
 }

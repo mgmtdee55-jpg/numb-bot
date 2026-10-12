@@ -2,12 +2,16 @@ const logs = require("./logs");
 const voice = require("./voice");
 const punishments = require("./punishments");
 const stats = require("../stats");
+const security = require("../security");
+const sellers = require("../verified-seller");
 
 function stamp() {
   return logs.whenLine(Date.now());
 }
 
 function bindClient(client) {
+  security.bind(client);
+  sellers.bind(client);
   client.on("voiceStateUpdate", (before, after) => {
     stats.trackVoice(before, after);
     require("../vc-features").observe(before, after).catch((error) => console.error("[vc feature]", error));

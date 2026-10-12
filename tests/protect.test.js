@@ -388,12 +388,12 @@ test("the owner of a protection can unprotect that role or user", async () => {
 
   const catalog = require("../vouch/catalog");
   const help = require("../vouch/help");
-  const page = catalog.commandPages("-").find((item) => item.name === "Protection");
-  assert.match(page.description, /`-protect` protect a role or user · Gods and the server owner/);
-  assert.match(page.description, /`-unprotect` undo a role or user you protected · Gods and the server owner/);
-  assert.match(page.description, /`-protected` people you protect · Everyone/);
-  assert.match(page.description, /`-plist` everyone protected · Everyone/);
-  assert.match(page.description, /`-protectedlist` everyone protected · Everyone/);
+  const listed = catalog.commandPages("-").filter((item) => item.name === "Role Management").map((item) => item.description).join("\n");
+  assert.match(listed, /`-protect` protect a role or user · Verified Sellers can protect a role\. Gods and the server owner/);
+  assert.match(listed, /`-unprotect` undo a role or user you protected · Gods and the server owner/);
+  assert.match(listed, /`-protected` people you protect · Everyone/);
+  assert.match(listed, /`-plist` everyone protected · Everyone/);
+  assert.match(listed, /`-protectedlist` everyone protected · Everyone/);
   const rendered = help.renderHelp("protection", "-", owner);
   assert.equal(rendered.data.title, "Protection");
   assert.match(rendered.data.description, /Gods and the server owner protect and unprotect/);
@@ -403,5 +403,5 @@ test("the owner of a protection can unprotect that role or user", async () => {
   const shown = message(guild, owner, "-help");
   await help.sendHelp(shown, "-");
   const options = shown.replies[0].components[0].toJSON().components[0].options;
-  assert.ok(options.some((option) => option.value === "protection" && option.label === "Protection"));
+  assert.ok(options.some((option) => option.value === "roles" && option.label === "Role Management"));
 });

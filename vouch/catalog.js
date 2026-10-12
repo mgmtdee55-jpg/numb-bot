@@ -23,7 +23,7 @@ const WHO = {
   "vc permit": "Everyone", "vc claim": "Everyone · 30s", "vc transfer": "Everyone", "vc limit": "Everyone",
   "vc config": "Gods+", "voicemaster configuration": "Gods+", "vc edit": "Owner", mvc: "Everyone",
   "send interface": "Everyone", ghost: "Premium+", unghost: "Premium+", claim: "Everyone · 30s",
-  "vc rank": "Everyone", "vc rank assign": "Gods+", "vc unrank": "Gods+", "vc rankinfo": "Everyone",
+  "vc rank": "Everyone", "vc rank assign": "Verified Seller, CEOs, and the server owner", "vc unrank": "Gods+", "vc rankinfo": "Everyone",
   "voice plus": "Gods+", "voice premium": "Gods+", "vouch premium plus": "Gods+",
   forceownership: "Founder+", voiceoverride: "Premium+", dragall: "Founder+", voicehistory: "Founder+",
   godmode: "Founder+", ungodmode: "Founder+", muteall: "Gods+", unmuteall: "Gods+",
@@ -43,7 +43,10 @@ const WHO = {
   "antinuke admin add": "Owner", "antinuke admin remove": "Owner", "antinuke admin list": "Everyone",
   "god add": "Gods+", "god take": "Gods+", "god info": "Gods+",
   "m add": "Gods+", "m take": "Gods+", "m list": "Gods+",
-  grant: "Gods+", revoke: "Gods+", "grant list": "Gods+",
+  grant: "Gods+ and authorized Verified Sellers", revoke: "Gods+", "grant list": "Gods+",
+  verifiedseller: "CEOs and the server owner", "verifiedseller add": "CEOs and the server owner",
+  "verifiedseller remove": "CEOs and the server owner", "verifiedseller addgiver": "CEOs and the server owner",
+  "verifiedseller removegiver": "CEOs and the server owner",
   forcemanage: "Founder+", forcenickname: "Founder+", unforcenickname: "Founder+",
   forcerolestrip: "Founder+", unforcerolestrip: "Founder+", rolestrip: "Founder+",
   help: "Everyone", showallcommands: "Everyone", afk: "Everyone", "afk mentions": "Everyone", setprefix: "Founder+",
@@ -56,8 +59,18 @@ const WHO = {
   "giveaways start": "Gods+", "giveaways reroll": "Gods+", "gw start": "Gods+", "gw reroll": "Gods+",
   "set gw host": "Gods+", modsetup: "Gods+",
   "vanity set": "Gods+", "vanity reward": "Gods+", vanitysetup: "Gods+", vanity: "Gods+",
-  protect: "Gods and the server owner", unprotect: "Gods and the server owner",
-  protected: "Everyone", plist: "Everyone", protectedlist: "Everyone"
+  protect: "Verified Sellers can protect a role. Gods and the server owner", unprotect: "Gods and the server owner",
+  protected: "Everyone", plist: "Everyone", protectedlist: "Everyone",
+  securityconfig: "Owner and Anti-Nuke admins",
+  dangerouspermissionsadd: "Owner and Anti-Nuke admins",
+  dangerouspermissionsupdate: "Owner and Anti-Nuke admins",
+  vanityprotection: "Owner and Anti-Nuke admins",
+  denybotjoins: "Owner and Anti-Nuke admins",
+  massmemberkick: "Owner and Anti-Nuke admins",
+  massmemberban: "Owner and Anti-Nuke admins",
+  setwatchrole: "Owner and Anti-Nuke admins",
+  watchuser: "Owner and Anti-Nuke admins",
+  unwatchuser: "Owner and Anti-Nuke admins"
 };
 
 function line(prefix, command, blurb) {
@@ -69,7 +82,7 @@ function block(prefix, rows) {
   return rows.map(([command, blurb]) => line(prefix, command, blurb)).join("\n");
 }
 
-function categories(prefix) {
+function rawCategories(prefix) {
   return [
     ["Moderation", block(prefix, [
       ["ban", "ban a member"],
@@ -272,6 +285,18 @@ function categories(prefix) {
       ["plist", "everyone protected"],
       ["protectedlist", "everyone protected"]
     ])],
+    ["Security", block(prefix, [
+      ["securityconfig", "view modules and thresholds"],
+      ["dangerouspermissionsadd", "ban and undo administrator grants"],
+      ["dangerouspermissionsupdate", "ban and undo dangerous grants"],
+      ["vanityprotection", "restore the server vanity and ban"],
+      ["denybotjoins", "ban new bots and whoever added them"],
+      ["massmemberkick", "kick burst threshold and punishment"],
+      ["massmemberban", "ban burst threshold and punishment"],
+      ["setwatchrole", "log when a role is given or removed"],
+      ["watchuser", "log a member's moderation"],
+      ["unwatchuser", "stop watching a member"]
+    ])],
     ["Giveaways", block(prefix, [
       ["giveaways start", "start a giveaway"],
       ["giveaways reroll", "pick a new winner"],
@@ -295,6 +320,57 @@ function categories(prefix) {
       ["afk mentions", "see who mentioned you"]
     ])]
   ].map(([name, value]) => ({ name, value }));
+}
+
+const CATEGORY_ORDER = ["Moderation", "Voice Management", "Vouch", "Role Management", "Verified Seller"];
+
+const VOICE_NAMES = new Set([
+  "ghost", "unghost", "claim", "muteall", "unmuteall", "dragall", "follow", "chain",
+  "unfollow", "bring", "inspect", "forceclaim", "stsu", "unstsu", "shield", "unshield",
+  "godmode", "ungodmode", "forceownership", "mvc", "send interface"
+]);
+
+const SECURITY_NAMES = new Set([
+  "securityconfig", "dangerouspermissionsadd", "dangerouspermissionsupdate", "vanityprotection",
+  "denybotjoins", "massmemberkick", "massmemberban", "setwatchrole", "unwatchrole", "watchuser", "unwatchuser"
+]);
+
+function commandOf(line, prefix) {
+  const match = /^`([^`]+)`/.exec(line);
+  if (!match) return "";
+  const shown = match[1];
+  return shown.startsWith(prefix) ? shown.slice(prefix.length) : shown;
+}
+
+function place(command) {
+  const name = String(command || "").toLowerCase();
+  if (name.startsWith("verifiedseller") || name === "grant" || name === "revoke" || name === "grant list") return "Verified Seller";
+  if (name.includes("vouch")) return "Vouch";
+  if (name.includes("vc") || name.includes("voice") || VOICE_NAMES.has(name)) return "Voice Management";
+  if (SECURITY_NAMES.has(name)) return "Moderation";
+  if (name === "plist" || name.includes("limit") || name.includes("role") || name.includes("protect") || name.includes("force") || name.includes("strip")) return "Role Management";
+  return "Moderation";
+}
+
+function categories(prefix) {
+  const buckets = new Map(CATEGORY_ORDER.map((name) => [name, []]));
+  for (const category of rawCategories(prefix)) {
+    for (const line of String(category.value || "").split("\n").filter(Boolean)) {
+      buckets.get(place(commandOf(line, prefix))).push(line);
+    }
+  }
+  const seller = block(prefix, [
+    ["verifiedseller", "view the role, sellers, and commands they can grant"],
+    ["verifiedseller add", "make someone a verified seller"],
+    ["verifiedseller remove", "remove a verified seller"],
+    ["verifiedseller addgiver", "let verified sellers grant a command"],
+    ["verifiedseller removegiver", "stop verified sellers granting a command"]
+  ]).split("\n").filter(Boolean);
+  const existing = new Set(buckets.get("Verified Seller"));
+  for (const line of seller) {
+    if (!existing.has(line)) buckets.get("Verified Seller").push(line);
+  }
+  return CATEGORY_ORDER.map((name) => ({ name, value: buckets.get(name).join("\n") }));
 }
 
 function splitField(field) {

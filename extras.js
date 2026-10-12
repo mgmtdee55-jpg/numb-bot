@@ -141,6 +141,7 @@ async function handleInteraction(interaction) {
   if (id.startsWith("spanter:vcedit:")) return require("./vc-features").handleButton(interaction);
   if (id.startsWith("spanter:confirm:nuke:")) return require("./systems/channels").handleInteraction(interaction);
   if (id.startsWith("spanter:confirm:vcreset:")) return require("./commands").handleVcReset(interaction);
+  if (id.startsWith("spanter:seller:")) return require("./verified-seller").handleInteraction(interaction);
   return false;
 }
 

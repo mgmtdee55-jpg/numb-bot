@@ -48,7 +48,10 @@ const BUILTIN_COMMANDS = new Set([
   "embedcreate", "instagram", "ig", "insta", "tiktok", "roblox", "giveaways", "gw", "voicemaster", "set",
   "vanity", "vanitysetup", "snipe", "s", "clearsnipe", "cs", "modstats", "viewstats", "u", "auditlog",
   "proof", "prooflist", "noproof",
-  "protect", "unprotect", "plist", "protectedlist", "protected",
+  "protect", "unprotect", "plist", "protectedlist", "protected", "verifiedseller",
+  "securityconfig", "dangerouspermissionsadd", "dpa", "dangerouspermissionsupdate", "dpu",
+  "vanityprotection", "vp", "denybotjoins", "dbj", "massmemberkick", "mmk", "massmemberban", "mmb",
+  "setwatchrole", "unwatchrole", "watchuser", "unwatchuser",
   "serversetup", "jail", "unjail", "cmute", "chatmute", "imute", "imagemute", "rmute", "reactionmute",
   "mute", "servermute", "cam", "camblacklist"
 ]);
