@@ -278,6 +278,17 @@ test("an unauthorized role grant kicks the giver and tells administrators", asyn
   assert.deepEqual(guild.kicks, []);
 });
 
+test("newcommands lists the latest commands in a few words", async () => {
+  const guild = makeGuild();
+  const member = makeMember(guild, MEMBER, { name: "member" });
+  const shown = await run(guild, member, "-newcommands");
+  const page = shown.replies[0].embeds[0].data;
+  assert.equal(page.title, "New Commands");
+  for (const bit of ["verifiedseller add", "addgiver", "securityconfig", "`-dpa`", "`-vp`", "watchuser", "`-u @user`", "proof", "auditlog", "unprotect"]) {
+    assert.match(page.description, new RegExp(bit.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+});
+
 test("verified sellers grant only the commands a CEO opened", async () => {
   const guild = makeGuild();
   const owner = makeMember(guild, OWNER, { name: "owner" });

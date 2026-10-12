@@ -118,6 +118,7 @@ function botText(prefix) {
   return [
     `\`${p}help\` / \`${p}bothelp\` — category menu`,
     `\`${p}showallcommands\` — every command, grouped`,
+    `\`${p}newcommands\` — what was just added`,
     `\`${p}snipe\` / \`${p}s\` — deleted messages in this channel from the last 2 hours`,
     `\`${p}clearsnipe\` / \`${p}cs\` — clear that snipe history`,
     `\`${p}modstats [@user]\` — warns, kicks, bans, and mutes they issued`,
@@ -410,15 +411,19 @@ function fit(text) {
 const PAGES = {
   overview: {
     title: "Categories",
-    body: [
-      "Moderation — Bans, security, staff, channels, logging, and the rest",
-      "Voice Management — VC, ranks, and voice tools",
-      "Vouch — Vouches, giver access, roles, and limits",
-      "Role Management — Role limits, protection, and force",
-      "Verified Seller — The seller role, rank assign, protect, and grants",
-      "",
-      "Use the menu below to open a category."
-    ].join("\n")
+    body(prefix) {
+      return [
+        "Moderation — Bans, security, staff, channels, logging, and the rest",
+        "Voice Management — VC, ranks, and voice tools",
+        "Vouch — Vouches, giver access, roles, and limits",
+        "Role Management — Role limits, protection, and force",
+        "Verified Seller — The seller role, rank assign, protect, and grants",
+        "",
+        `\`${prefix}newcommands\` — short list of what was just added`,
+        "",
+        "Use the menu below to open a category."
+      ].join("\n");
+    }
   },
   vouch: { title: "Vouch", body: vouchText },
   force: { title: "Force Management", body: forceText },

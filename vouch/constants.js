@@ -33,7 +33,7 @@ const STAFF_PERMISSIONS = STAFF_FLAG_NAMES
   .filter((flag) => typeof flag === "bigint");
 
 const BUILTIN_COMMANDS = new Set([
-  "help", "bothelp", "showallcommands", "setprefix", "alias", "vouch", "vouchblacklist", "vouchstrip",
+  "help", "bothelp", "showallcommands", "newcommands", "setprefix", "alias", "vouch", "vouchblacklist", "vouchstrip",
   "setrole", "forcemanage", "forcenickname",
   "unforcenickname", "forcerolestrip", "forcestrip", "unforcerolestrip", "unforcestrip",
   "rolestrip", "vc", "mvc", "send", "lock", "unlock", "ghost", "unghost", "claim",

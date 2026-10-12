@@ -49,7 +49,7 @@ const WHO = {
   "verifiedseller removegiver": "CEOs and the server owner",
   forcemanage: "Founder+", forcenickname: "Founder+", unforcenickname: "Founder+",
   forcerolestrip: "Founder+", unforcerolestrip: "Founder+", rolestrip: "Founder+",
-  help: "Everyone", showallcommands: "Everyone", afk: "Everyone", "afk mentions": "Everyone", setprefix: "Founder+",
+  help: "Everyone", showallcommands: "Everyone", newcommands: "Everyone", afk: "Everyone", "afk mentions": "Everyone", setprefix: "Founder+",
   snipe: "Everyone", s: "Everyone", clearsnipe: "Everyone", cs: "Everyone",
   proof: "Everyone", prooflist: "Everyone", noproof: "Everyone",
   modstats: "Everyone", viewstats: "Everyone", u: "Everyone",
@@ -307,6 +307,7 @@ function rawCategories(prefix) {
     ["Bot", block(prefix, [
       ["help", "open the category menu"],
       ["showallcommands", "this list"],
+      ["newcommands", "what was just added"],
       ["embedcreate", "build an embed"],
       ["setprefix", "change the prefix"],
       ["alias add", "add a shortcut"],
@@ -447,4 +448,42 @@ function pageMessage(prefix = "-", index = 0, member = null) {
   return { embeds: [embed], components: [menu, row] };
 }
 
-module.exports = { categories, commandPages, pageMessage, splitField };
+function newCommandsMessage(prefix = "-", member = null) {
+  const p = prefix;
+  const lines = [
+    "What was just added.",
+    "",
+    "**Verified Seller**",
+    `\`${p}verifiedseller @role\` — set the one seller role`,
+    `\`${p}verifiedseller add @user\` — make them a verified seller`,
+    `\`${p}verifiedseller remove @user\` — take the rank off`,
+    `\`${p}verifiedseller addgiver <command>\` — let sellers grant that command`,
+    `\`${p}verifiedseller removegiver <command>\` — stop that grant`,
+    "Sellers can assign a VC rank and protect a role.",
+    "",
+    "**Security**",
+    `\`${p}securityconfig\` — see which modules are on`,
+    `\`${p}dpa\` — undo administrator on a role, then ban`,
+    `\`${p}dpu\` — undo ban, kick, manage server, or webhooks, then ban`,
+    `\`${p}vp\` — put the vanity back and ban who changed it`,
+    `\`${p}dbj\` — ban a new bot and whoever added it`,
+    `\`${p}mmk\` / \`${p}mmb\` — punish a kick or ban burst`,
+    `\`${p}setwatchrole @role\` — log when that role is given`,
+    `\`${p}watchuser @user\` — log what that member does`,
+    "",
+    "**Also new**",
+    `\`${p}u @user\` — activity card`,
+    `\`${p}proof @user\` — images they posted since joining`,
+    `\`${p}auditlog @user\` — recent mutes, bans, and voice actions`,
+    `\`${p}unprotect\` — undo a protection you set`
+  ];
+  const rank = member ? access.rankLine(member) : "";
+  const embed = new EmbedBuilder()
+    .setColor(ACCENT)
+    .setTitle("New Commands")
+    .setDescription(lines.join("\n").slice(0, 4096))
+    .setFooter({ text: rank || "Everyone" });
+  return { embeds: [embed] };
+}
+
+module.exports = { categories, commandPages, pageMessage, newCommandsMessage, splitField };

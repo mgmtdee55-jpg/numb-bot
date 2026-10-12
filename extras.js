@@ -72,6 +72,10 @@ async function handleCommand(message, args, prefix) {
     await message.reply(catalog.pageMessage(prefix, 0, message.member));
     return true;
   }
+  if (name === "newcommands") {
+    await message.reply(catalog.newCommandsMessage(prefix, message.member));
+    return true;
+  }
   if (name === "snipe" || name === "s" || name === "clearsnipe" || name === "cs") {
     await snipe.handleCommand(message, name);
     return true;

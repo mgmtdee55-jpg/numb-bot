@@ -783,6 +783,13 @@ const SPECS = {
     example: "watchuser @user",
     permission: "Server owner and Anti-Nuke admins"
   },
+  newcommands: {
+    name: "newcommands",
+    description: "Show the commands that were just added, in a few words.",
+    syntax: "newcommands",
+    example: "newcommands",
+    permission: "Everyone"
+  },
   verifiedseller: {
     name: "verifiedseller",
     description: "Set the one Verified Seller role, or view who has it.",
