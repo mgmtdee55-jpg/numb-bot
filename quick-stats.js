@@ -1,4 +1,5 @@
 const fs = require("node:fs");
+const path = require("node:path");
 const {
   ActionRowBuilder,
   AttachmentBuilder,
@@ -17,14 +18,20 @@ const DAY_MS = 24 * HOUR_MS;
 const RANGES = { "7d": 7, "24h": 1 };
 const VIEWS = ["overview", "messages", "voice"];
 
-const FONTS = [
-  ["C:/Windows/Fonts/segoeui.ttf", "Segoe"],
-  ["C:/Windows/Fonts/segoeuib.ttf", "Segoe Bold"],
-  ["/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "Segoe"],
-  ["/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", "Segoe Bold"]
+const FONT_REGULAR = "Card";
+const FONT_BOLD = "Card Bold";
+const FONT_FILES = [
+  [path.join(__dirname, "fonts", "inter-latin-400-normal.woff"), FONT_REGULAR],
+  [path.join(__dirname, "fonts", "inter-latin-700-normal.woff"), FONT_BOLD],
+  ["C:/Windows/Fonts/segoeui.ttf", FONT_REGULAR],
+  ["C:/Windows/Fonts/segoeuib.ttf", FONT_BOLD],
+  ["/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", FONT_REGULAR],
+  ["/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", FONT_BOLD]
 ];
-for (const [file, family] of FONTS) {
-  if (fs.existsSync(file)) GlobalFonts.registerFromPath(file, family);
+const registeredFonts = new Set();
+for (const [file, family] of FONT_FILES) {
+  if (registeredFonts.has(family) || !fs.existsSync(file)) continue;
+  if (GlobalFonts.registerFromPath(file, family)) registeredFonts.add(family);
 }
 
 connection.exec(`
@@ -233,7 +240,8 @@ function roundRect(ctx, x, y, width, height, radius) {
 }
 
 function font(size, bold) {
-  return `${size}px ${bold ? "Segoe Bold" : "Segoe"}, sans-serif`;
+  const family = bold && registeredFonts.has(FONT_BOLD) ? FONT_BOLD : FONT_REGULAR;
+  return `${size}px "${family}", "Segoe UI", sans-serif`;
 }
 
 function smooth(ctx, points) {
@@ -249,6 +257,17 @@ function smooth(ctx, points) {
     ctx.quadraticCurveTo(current.x, current.y, midX, midY);
   }
   ctx.lineTo(points[points.length - 1].x, points[points.length - 1].y);
+}
+
+async function loadAvatar(url) {
+  if (!url || process.env.NODE_TEST_CONTEXT) return null;
+  try {
+    const response = await fetch(url, { signal: AbortSignal.timeout(1200) });
+    if (!response.ok) return null;
+    return await loadImage(Buffer.from(await response.arrayBuffer()));
+  } catch {
+    return null;
+  }
 }
 
 async function renderCard(model) {
@@ -269,7 +288,7 @@ async function renderCard(model) {
   ctx.fillStyle = "#5865f2";
   ctx.fill();
   ctx.clip();
-  const image = model.avatarUrl ? await loadImage(model.avatarUrl).catch(() => null) : null;
+  const image = await loadAvatar(model.avatarUrl);
   if (image) ctx.drawImage(image, avatarX - 28, avatarY - 28, 56, 56);
   else {
     ctx.fillStyle = "#ffffff";
@@ -522,11 +541,23 @@ async function handleCommand(message, args) {
 }
 
 async function replace(interaction, payload) {
-  if (typeof interaction.deferUpdate === "function" && !interaction.deferred && !interaction.replied) {
-    await interaction.deferUpdate().catch(() => null);
+  const next = {
+    content: payload.content ?? "",
+    embeds: [],
+    components: payload.components || [],
+    files: payload.files || [],
+    attachments: [],
+    allowedMentions: { parse: [] }
+  };
+  if (!interaction.deferred && !interaction.replied && typeof interaction.update === "function") {
+    return interaction.update(next);
   }
-  if (interaction.deferred || interaction.replied) return interaction.editReply(payload);
-  return interaction.update(payload);
+  if (typeof interaction.editReply === "function") {
+    await interaction.editReply({ ...next, files: [] });
+    if (next.files.length) return interaction.editReply(next);
+    return null;
+  }
+  return interaction.reply(next);
 }
 
 async function handleInteraction(interaction) {

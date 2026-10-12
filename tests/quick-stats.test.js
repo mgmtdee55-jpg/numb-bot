@@ -3,6 +3,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
+const { createCanvas, loadImage } = require("@napi-rs/canvas");
 
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "spanter-quick-"));
 process.env.DB_PATH = path.join(scratch, "vc.sqlite");
@@ -49,6 +50,19 @@ function guild() {
   };
 }
 
+async function lightPixels(buffer, x, y, width, height) {
+  const image = await loadImage(buffer);
+  const canvas = createCanvas(image.width, image.height);
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(image, 0, 0);
+  const sample = ctx.getImageData(x, y, width, height).data;
+  let light = 0;
+  for (let index = 0; index < sample.length; index += 4) {
+    if (sample[index] > 200 && sample[index + 1] > 200 && sample[index + 2] > 200) light += 1;
+  }
+  return light;
+}
+
 function command(group, content, author) {
   return {
     content,
@@ -87,6 +101,7 @@ test("s-u builds the activity card for the mentioned member", async () => {
   const reply = shown.replies[0];
   assert.equal(reply.files[0].name, "quick-stats.png");
   assert.equal(reply.files[0].attachment[0], 0x89);
+  assert.ok(await lightPixels(reply.files[0].attachment, 40, 120, 900, 80) > 80);
   assert.equal(reply.components[0].components[0].data.placeholder, "Change view");
   const labels = reply.components[1].components.map((button) => button.data.label);
   assert.deepEqual(labels, ["7 days", "Refresh", "Disable Quick Stats"]);
@@ -94,14 +109,21 @@ test("s-u builds the activity card for the mentioned member", async () => {
 
   const range = reply.components[1].components[0];
   let updated;
+  let deferred = false;
   await quick.handleInteraction({
     customId: range.data.custom_id,
     user: group.me.user,
     guild: group,
+    async deferUpdate() { deferred = true; this.deferred = true; },
+    async editReply(payload) { this.edited = payload; },
     async update(payload) { updated = payload; }
   });
+  assert.equal(deferred, false);
   assert.equal(updated.components[1].components[0].data.label, "24 hours");
-  assert.equal(updated.files[0].name, "quick-stats.png");
+  assert.equal(updated.files.length, 1);
+  assert.deepEqual(updated.attachments, []);
+  assert.deepEqual(updated.embeds, []);
+  assert.ok(await lightPixels(updated.files[0].attachment, 40, 120, 900, 80) > 80);
 
   const stranger = {
     customId: range.data.custom_id,
