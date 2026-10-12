@@ -372,7 +372,7 @@ function sellerText(prefix) {
   return [
     "Verified Seller sits under CEO / God and above Founder.",
     "Only CEOs and the server owner can set the one role or add someone.",
-    "If anyone else gives that role, the bot removes it, kicks the person who gave it, and tells administrators.",
+    "If anyone else gives or removes that role, the bot reverses it, kicks that person, and tells administrators.",
     "",
     "**CEOs and the server owner**",
     `\`${p}verifiedseller @role\` — set the one role`,

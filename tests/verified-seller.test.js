@@ -273,6 +273,30 @@ test("an unauthorized role grant kicks the giver and tells administrators", asyn
   assert.match(owner.user.dms[0], /Who:/);
   assert.equal(sellers.isSeller(fresh), false);
 
+  target.roles.cache.delete(ROLE);
+  await sellers.handleAudit(guild, entry(god.id, target.id, ROLE, "$remove"));
+  assert.deepEqual(guild.kicks, [rogue.id]);
+  assert.equal(target.roles.cache.has(ROLE), false);
+  assert.equal(sellers.isSeller(target), false);
+
+  guild.kicks.length = 0;
+  fresh.roles.cache.delete(ROLE);
+  await sellers.handleAudit(guild, entry(rogue.id, fresh.id, ROLE, "$remove"));
+  assert.deepEqual(guild.kicks, [rogue.id]);
+  assert.equal(fresh.roles.cache.has(ROLE), true);
+  assert.match(rogue.user.dms.at(-1), /removed/);
+  assert.match(rogue.user.dms.at(-1), /Only CEOs and the server owner/);
+  assert.match(admin.user.dms.at(-1), /removed without permission/);
+  assert.match(admin.user.dms.at(-1), new RegExp(`Who: <@${rogue.id}>`));
+  assert.match(admin.user.dms.at(-1), /Response time: \d+ms/);
+  assert.equal(sellers.isSeller(fresh), true);
+
+  fresh.roles.cache.delete(ROLE);
+  await sellers.handleAudit(guild, entry(owner.id, fresh.id, ROLE, "$remove"));
+  assert.deepEqual(guild.kicks, [rogue.id]);
+  assert.equal(fresh.roles.cache.has(ROLE), false);
+  assert.equal(sellers.isSeller(fresh), false);
+
   guild.kicks.length = 0;
   await sellers.handleAudit(guild, entry(BOT, MEMBER, ROLE));
   assert.deepEqual(guild.kicks, []);

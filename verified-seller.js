@@ -322,48 +322,65 @@ async function notifyAdmins(guild, skipId, content) {
   }
 }
 
-async function punish(guild, entry, roleId) {
+async function punish(guild, entry, roleId, action) {
   const started = Date.now();
+  const removing = action === "remove";
   const executor = executorId(entry);
   const target = targetId(entry);
-  const claim = `${guild.id}:${entry.id || `${executor}:${target}`}:${roleId}`;
+  const claim = `${guild.id}:${entry.id || `${executor}:${target}`}:${roleId}:${action}`;
   if (claims.has(claim)) return;
   claims.add(claim);
   const recipient = await fetchMember(guild, target);
-  if (recipient?.roles?.remove) {
+  if (removing) {
+    if (recipient?.roles?.add) {
+      await recipient.roles.add(roleId, "Verified Seller role was removed without permission").catch(() => null);
+    } else if (recipient?.roles?.cache?.set) {
+      recipient.roles.cache.set(String(roleId), { id: String(roleId) });
+    }
+    remember(guild.id, target, null);
+  } else if (recipient?.roles?.remove) {
     await recipient.roles.remove(roleId, "Verified Seller role was given without permission").catch(() => null);
+    statements.remove.run(String(guild.id), String(target));
   } else if (recipient?.roles?.cache?.delete) {
     recipient.roles.cache.delete(roleId);
+    statements.remove.run(String(guild.id), String(target));
+  } else {
+    statements.remove.run(String(guild.id), String(target));
   }
-  statements.remove.run(String(guild.id), String(target));
   const giver = await fetchMember(guild, executor);
   const elapsed = () => Date.now() - started;
+  const verb = removing ? "remove" : "give";
   if (!executor || String(executor) === botId(guild)) {
     await notifyAdmins(guild, null, [
-      "Verified Seller role was given without a confirmed CEO or server owner.",
-      `Who: unknown`,
+      `Verified Seller role was ${removing ? "removed" : "given"} without a confirmed CEO or server owner.`,
+      "Who: unknown",
       `To: <@${target}>`,
-      "Punishment: removed the role. Nobody was kicked because the giver could not be confirmed.",
+      `Punishment: ${removing ? "put the role back" : "removed the role"}. Nobody was kicked because the member could not be confirmed.`,
       `Response time: ${elapsed()}ms`
     ].join("\n"));
     return;
   }
   const same = String(executor) === String(target);
-  const why = same
-    ? `You were kicked from ${guild.name || "the server"}.\nYou gave yourself the Verified Seller role.\nOnly CEOs and the server owner can give that role. The role was removed and you were kicked.`
-    : `You were kicked from ${guild.name || "the server"}.\nYou gave the Verified Seller role to <@${target}>.\nOnly CEOs and the server owner can give that role. The role was removed and you were kicked.`;
+  const why = removing
+    ? `You were kicked from ${guild.name || "the server"}.\nYou ${same ? "removed your own" : `removed <@${target}>'s`} Verified Seller role.\nOnly CEOs and the server owner can ${verb} that role. The role was put back and you were kicked.`
+    : `You were kicked from ${guild.name || "the server"}.\nYou ${same ? "gave yourself" : `gave <@${target}>`} the Verified Seller role.\nOnly CEOs and the server owner can ${verb} that role. The role was removed and you were kicked.`;
   await sendDM(giver, why);
   let kicked = false;
   const protectedGiver = String(executor) === String(guild.ownerId);
   if (!protectedGiver && typeof guild.members?.kick === "function") {
-    kicked = await guild.members.kick(executor, "Gave the Verified Seller role without being a CEO or the server owner").then(() => true).catch(() => false);
+    kicked = await guild.members.kick(
+      executor,
+      removing
+        ? "Removed the Verified Seller role without being a CEO or the server owner"
+        : "Gave the Verified Seller role without being a CEO or the server owner"
+    ).then(() => true).catch(() => false);
   }
   const ms = elapsed();
   const punishment = kicked
-    ? `kicked <@${executor}> and removed the role from <@${target}>`
-    : `removed the role from <@${target}>; the kick did not go through`;
+    ? `kicked <@${executor}> and ${removing ? `put the role back on <@${target}>` : `removed the role from <@${target}>`}`
+    : `${removing ? `put the role back on <@${target}>` : `removed the role from <@${target}>`}; the kick did not go through`;
   await notifyAdmins(guild, executor, [
-    "Verified Seller role was given without permission.",
+    `Verified Seller role was ${removing ? "removed" : "given"} without permission.`,
     `Who: <@${executor}>`,
     `To: <@${target}>`,
     `Punishment: ${punishment}`,
@@ -388,17 +405,22 @@ async function handleAudit(guild, entry) {
     if (change.key === "$add" || change.key === "add") added = true;
     if (change.key === "$remove" || change.key === "remove") removed = true;
   }
+  const member = await fetchMember(guild, executor);
+  const allowed = allowedGiver(guild, member, executor);
   if (removed && !added) {
-    statements.remove.run(String(guild.id), String(target));
+    if (allowed) {
+      statements.remove.run(String(guild.id), String(target));
+      return;
+    }
+    await punish(guild, entry, configured, "remove");
     return;
   }
   if (!added) return;
-  const member = await fetchMember(guild, executor);
-  if (allowedGiver(guild, member, executor)) {
+  if (allowed) {
     remember(guild.id, target, executor);
     return;
   }
-  await punish(guild, entry, configured);
+  await punish(guild, entry, configured, "add");
 }
 
 function bind(client) {
