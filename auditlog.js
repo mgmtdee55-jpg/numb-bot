@@ -254,18 +254,18 @@ function buttons(view, targetId, invokerId, page, pages) {
     ["timeout", "Timeouts"],
     ["ban", "Bans"]
   ].map(([key, label]) => new ButtonBuilder()
-    .setCustomId(`spanter:auditlog:${key}:${targetId}:${invokerId}:0`)
+    .setCustomId(`spanter:auditlog:${key}:${targetId}:${invokerId}:0:tab`)
     .setLabel(label)
     .setStyle(key === view ? ButtonStyle.Primary : ButtonStyle.Secondary));
   if (pages > 1) {
     row.push(
       new ButtonBuilder()
-        .setCustomId(`spanter:auditlog:${view}:${targetId}:${invokerId}:${page - 1}`)
+        .setCustomId(`spanter:auditlog:${view}:${targetId}:${invokerId}:${page - 1}:nav`)
         .setLabel("Back")
         .setStyle(ButtonStyle.Secondary)
         .setDisabled(page <= 0),
       new ButtonBuilder()
-        .setCustomId(`spanter:auditlog:${view}:${targetId}:${invokerId}:${page + 1}`)
+        .setCustomId(`spanter:auditlog:${view}:${targetId}:${invokerId}:${page + 1}:nav`)
         .setLabel("Next")
         .setStyle(ButtonStyle.Secondary)
         .setDisabled(page >= pages - 1)

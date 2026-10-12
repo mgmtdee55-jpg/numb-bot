@@ -248,6 +248,9 @@ test("auditlog pages each side without dropping the other direction", async () =
   assert.match(next.updated.embeds[0].data.footer.text, /Page 2\/2/);
   assert.equal(button(next.updated, "Next").data.disabled, true);
   assert.equal(button(next.updated, "Voice").data.style, ButtonStyle.Primary);
+  const ids = next.updated.components[0].components.map((item) => item.data.custom_id);
+  assert.equal(new Set(ids).size, ids.length);
+  assert.notEqual(button(next.updated, "Back").data.custom_id, button(next.updated, "Voice").data.custom_id);
 });
 
 test("auditlog is open to everyone, and the bot must be able to read it", async () => {
