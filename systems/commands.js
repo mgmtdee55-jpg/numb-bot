@@ -549,7 +549,7 @@ async function handleCommand(message, args, prefix) {
   const name = commandName(args, prefix);
   if (await extras.handleCommand(message, args, prefix)) return true;
   if (await require("../punish").handleCommand(message, name, args)) return true;
-  if (name === "protect" || name === "plist" || name === "protectedlist" || name === "protected") {
+  if (name === "protect" || name === "unprotect" || name === "plist" || name === "protectedlist" || name === "protected") {
     await require("../protect").handleCommand(message, name, args, prefix);
     return true;
   }

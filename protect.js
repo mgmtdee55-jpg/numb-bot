@@ -52,7 +52,12 @@ const statements = {
     VALUES(?,?,?,?,?)
     ON CONFLICT(guild_id, user_id, role_id) DO NOTHING
   `),
-  dropUser: connection.prepare("DELETE FROM protected_users WHERE guild_id=? AND user_id=? AND role_id=?")
+  dropUser: connection.prepare("DELETE FROM protected_users WHERE guild_id=? AND user_id=? AND role_id=?"),
+  usersForRole: connection.prepare("SELECT * FROM protected_users WHERE guild_id=? AND role_id=?"),
+  userRoles: connection.prepare("SELECT * FROM protected_users WHERE guild_id=? AND user_id=?"),
+  ownedUser: connection.prepare("SELECT * FROM protected_users WHERE guild_id=? AND owner_id=? AND user_id=? ORDER BY created_at ASC"),
+  dropRole: connection.prepare("DELETE FROM protection_roles WHERE guild_id=? AND role_id=? AND owner_id=?"),
+  dropRoleUsers: connection.prepare("DELETE FROM protected_users WHERE guild_id=? AND role_id=?")
 };
 
 const sessions = new Map();
@@ -385,9 +390,117 @@ async function assignUsers(message, members, roleId, interaction) {
   return message.reply(prompt);
 }
 
+async function unprotectRoles(message, roleList) {
+  if (!canAssignRoles(message.member)) {
+    return reply(message, "Access Denied", "Only Gods and the server owner can unprotect a role.");
+  }
+  const usable = roleList.filter((role) => role && role.id !== message.guild.id);
+  if (!usable.length) return replyUsage(message, "unprotect");
+  const released = [];
+  const blocked = [];
+  const missing = [];
+  for (const role of usable) {
+    const row = roleRow(message.guild.id, role.id);
+    if (!row) {
+      missing.push(`<@&${role.id}> is not protected`);
+      continue;
+    }
+    if (String(row.owner_id) !== String(message.author.id)) {
+      blocked.push(`<@&${role.id}> is protected by <@${row.owner_id}>. Only they can unprotect it.`);
+      continue;
+    }
+    const people = statements.usersForRole.all(String(message.guild.id), String(role.id));
+    statements.dropRoleUsers.run(String(message.guild.id), String(role.id));
+    statements.dropRole.run(String(message.guild.id), String(role.id), String(message.author.id));
+    const count = people.length;
+    const extra = count ? ` ${count} ${count === 1 ? "person is" : "people are"} no longer protected by it.` : "";
+    released.push(`You no longer own <@&${role.id}>.${extra}`);
+  }
+  if (!released.length) {
+    const title = blocked.length ? "Not Your Protection" : "Not Protected";
+    return reply(message, title, [...blocked, ...missing].join("\n"));
+  }
+  return reply(message, "Protection Removed", [...released, ...blocked, ...missing].join("\n"));
+}
+
+async function takeProtectionRole(member, roleId) {
+  if (!member?.roles?.cache?.has?.(roleId)) return true;
+  try {
+    await roles.removeRole(member, roleId, "Protection removed");
+    return true;
+  } catch (error) {
+    logThrottledError(`protect-remove:${member.guild.id}`, `[protect remove] ${member.id}`, error);
+    return false;
+  }
+}
+
+async function unprotectUsers(message, userList) {
+  if (!canAssignRoles(message.member)) {
+    return reply(message, "Access Denied", "Only Gods and the server owner can unprotect someone.");
+  }
+  const targets = [];
+  for (const target of userList) {
+    const member = await resolveUser(message, target);
+    if (member?.user?.bot) continue;
+    const userId = member?.id || target?.id;
+    if (!userId) continue;
+    targets.push({ member, userId });
+  }
+  if (!targets.length) return replyUsage(message, "unprotect");
+  const released = [];
+  const blocked = [];
+  const missing = [];
+  const failed = [];
+  for (const target of targets) {
+    const mine = statements.ownedUser.all(String(message.guild.id), String(message.author.id), String(target.userId));
+    if (!mine.length) {
+      const others = statements.userRoles.all(String(message.guild.id), String(target.userId));
+      if (others.length) {
+        const owners = [...new Set(others.map((row) => row.owner_id))];
+        blocked.push(`<@${target.userId}> is protected by ${owners.map((id) => `<@${id}>`).join(", ")}. Only they can unprotect them.`);
+      } else missing.push(`<@${target.userId}> is not protected by you`);
+      continue;
+    }
+    const removed = [];
+    const stuck = [];
+    for (const row of mine) {
+      const stripped = await takeProtectionRole(target.member, row.role_id);
+      if (!stripped) {
+        stuck.push(`<@&${row.role_id}>`);
+        continue;
+      }
+      statements.dropUser.run(String(message.guild.id), String(target.userId), String(row.role_id));
+      removed.push(`<@&${row.role_id}>`);
+    }
+    if (removed.length) {
+      let text = `<@${target.userId}> is no longer protected with ${removed.join(", ")}.`;
+      if (stuck.length) text += ` I could not remove ${stuck.join(", ")}. Check that my role is above it.`;
+      released.push(text);
+    } else if (stuck.length) {
+      failed.push(`I could not remove ${stuck.join(", ")} from <@${target.userId}>. Check that my role is above it.`);
+    }
+  }
+  if (!released.length) {
+    if (failed.length) return reply(message, "Unable to Unprotect", [...failed, ...blocked, ...missing].join("\n"));
+    const title = blocked.length ? "Not Your Protection" : "Not Protected";
+    return reply(message, title, [...blocked, ...missing].join("\n"));
+  }
+  return reply(message, "Protection Removed", [...released, ...failed, ...blocked, ...missing].join("\n"));
+}
+
 async function handleCommand(message, name, args) {
   if (name === "plist" || name === "protectedlist") return listAll(message);
   if (name === "protected") return listMine(message);
+  if (name === "unprotect") {
+    if (!canAssignRoles(message.member)) {
+      return reply(message, "Access Denied", "Only Gods and the server owner can unprotect someone.");
+    }
+    const found = await targetsFrom(message, args);
+    if (found.roles.length && found.users.length) return replyUsage(message, "unprotect");
+    if (found.roles.length) return unprotectRoles(message, found.roles);
+    if (found.users.length) return unprotectUsers(message, found.users);
+    return replyUsage(message, "unprotect");
+  }
   if (name !== "protect") return false;
   if (!canAssignRoles(message.member)) {
     return reply(message, "Access Denied", "Only Gods and the server owner can protect someone.");
@@ -404,10 +517,21 @@ function actorId(interaction) {
 }
 
 async function enableGodmode(interaction, session) {
+  const enabled = [];
   for (const roleId of session.roleIds) {
+    const row = roleRow(session.guildId, roleId);
+    if (!row || String(row.owner_id) !== String(session.userId)) continue;
     statements.setGodmode.run(1, String(session.guildId), String(roleId), String(session.userId));
+    enabled.push(roleId);
   }
-  const mentions = session.roleIds.map((id) => `<@&${id}>`).join(", ");
+  if (!enabled.length) {
+    await interaction.update({
+      embeds: [embed("Not Protected", "That role is no longer yours to protect.")],
+      components: []
+    });
+    return;
+  }
+  const mentions = enabled.map((id) => `<@&${id}>`).join(", ");
   await interaction.update({
     embeds: [embed("Godmode On", `${mentions} now undoes server mute and server deafen.`)],
     components: []

@@ -157,7 +157,7 @@ function infoText(prefix) {
 
 function godmodeText() {
   return [
-    "Godmode tiers, rank management, and protection commands.",
+    "Godmode tiers and rank management.",
     "",
     "`-god add @user` — give Godmode",
     "`-god take @user` — remove Godmode",
@@ -287,6 +287,23 @@ function staffText(prefix) {
   ].join("\n");
 }
 
+function protectionText(prefix) {
+  const p = prefix;
+  return [
+    "Protect a role or a user. Only the person who protected it can remove that protection.",
+    "",
+    "**Gods and the server owner**",
+    `\`${p}protect @role\` — protect a role. You become its only owner.`,
+    `\`${p}protect @user\` — give someone a role you protect.`,
+    `\`${p}unprotect @role\` — stop owning a role you protected.`,
+    `\`${p}unprotect @user\` — take your protection off a user.`,
+    "",
+    "**Everyone**",
+    `\`${p}protected\` — people you protect`,
+    `\`${p}plist\` / \`${p}protectedlist\` — everyone protected in this server`
+  ].join("\n");
+}
+
 function vanityText(prefix) {
   const p = prefix;
   return [
@@ -327,7 +344,8 @@ const PAGES = {
       "Moderation — Jail, mutes, bans, kicks, timeouts, warnings, purge",
       "Info & Avatars — Avatar, banner, server info, user info",
       "Voice / VC — VoiceMaster controls and VC command categories",
-      "Godmode — Godmode tiers, rank management, and protection commands",
+      "Godmode — Godmode tiers and rank management",
+      "Protection — Protect a role or user, and remove it",
       "VC Ranks — Voice Plus, Premium, and Premium Plus",
       "AntiNuke — Protection modules and status commands",
       "Channel Controls — Lock/unlock, hide/unhide, and full lockdown",
@@ -355,7 +373,8 @@ const PAGES = {
   staff: { title: "Staff Access", body: staffText },
   channels: { title: "Channel Controls", body: channelText },
   bot: { title: "Bot", body: botText },
-  vanity: { title: "Vanity", body: vanityText }
+  vanity: { title: "Vanity", body: vanityText },
+  protection: { title: "Protection", body: protectionText }
 };
 
 const CATEGORY_ACCESS = {
@@ -374,7 +393,8 @@ const CATEGORY_ACCESS = {
   staff: "Assigned tiers. The server owner can use every command.",
   force: "Founders and above",
   bot: "Help is everyone. Prefix, aliases, and restart are Founders and above.",
-  vanity: "Gods and the server owner"
+  vanity: "Gods and the server owner",
+  protection: "Gods and the server owner protect and unprotect. Everyone can view the lists."
 };
 
 function renderHelp(category, prefix, member) {
@@ -406,6 +426,7 @@ function helpOptions(selected, withEmoji) {
     { label: "Staff Access", value: "staff", description: "God, Founder, and Boss" },
     { label: "Force Management", value: "force", description: "Nicknames and role strips" },
     { label: "Vanity", value: "vanity", description: "Status rewards" },
+    { label: "Protection", value: "protection", description: "Protect a role or user" },
     { label: "Bot", value: "bot", description: "Prefix, aliases, restart" }
   ];
   return options.map((option) => {

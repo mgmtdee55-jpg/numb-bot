@@ -179,9 +179,38 @@ const SPECS = {
   },
   protect: {
     name: "protect",
-    description: "Protect a role or one user.",
+    description: "Protect a role or one user. You become the only owner of that protection.",
     syntax: "protect (role or user)",
-    example: "protect @user"
+    example: "protect @user",
+    permission: "Gods and the server owner"
+  },
+  unprotect: {
+    name: "unprotect",
+    description: "Stop owning a role you protected, or take your protection off a user.",
+    syntax: "unprotect (role or user)",
+    example: "unprotect @user",
+    permission: "Gods and the server owner"
+  },
+  protected: {
+    name: "protected",
+    description: "List the people you protect.",
+    syntax: "protected",
+    example: "protected",
+    permission: "Everyone"
+  },
+  plist: {
+    name: "plist",
+    description: "List every protected role and user in this server.",
+    syntax: "plist",
+    example: "plist",
+    permission: "Everyone"
+  },
+  protectedlist: {
+    name: "protectedlist",
+    description: "List every protected role and user in this server.",
+    syntax: "protectedlist",
+    example: "protectedlist",
+    permission: "Everyone"
   },
   giveaways: {
     name: "giveaways",
@@ -667,6 +696,7 @@ const SPECS = {
 
 const GROUPS = {
   ban: ["ban", "bancheck", "banpurge", "hardban", "softban", "tempban", "unban", "foreverban", "foreverunban"],
+  protect: ["protect", "unprotect", "protected", "plist", "protectedlist"],
   godmode: ["godmode", "ungodmode"],
   god: ["god", "godtake", "godinfo"],
   stsu: ["stsu", "unstsu"],

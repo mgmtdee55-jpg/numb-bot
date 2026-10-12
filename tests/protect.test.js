@@ -277,3 +277,131 @@ test("removing a protected role strips a human and only restores a bot", async (
   assert.equal(user.roles.cache.has(protectedRole.id), true);
   assert.equal(bot.roles.cache.size, 0);
 });
+
+test("the owner of a protection can unprotect that role or user", async () => {
+  const guild = makeGuild();
+  guild.id = "protect-undo";
+  const owner = person(OWNER, guild, { name: "Dee" });
+  const founder = person(FOUNDER, guild);
+  const god = person(GOD, guild, { name: "God" });
+  const user = person(USER, guild, { name: "Sam" });
+  guild.members.cache.set(owner.id, owner);
+  guild.members.cache.set(founder.id, founder);
+  guild.members.cache.set(god.id, god);
+  guild.members.cache.set(user.id, user);
+  store.setStaff(guild.id, founder.id, "founder", owner.id);
+  store.setStaff(guild.id, god.id, "god", owner.id);
+  const first = role(guild, ROLE_A, "Alpha");
+  const second = role(guild, ROLE_B, "Beta");
+
+  const denied = message(guild, founder, `-unprotect ${first.id}`);
+  await handleCommand(denied, {}, "-");
+  assert.equal(titleOf(denied), "Access Denied");
+
+  const claimed = message(guild, owner, `-protect ${first.id}`);
+  await handleCommand(claimed, {}, "-");
+  assert.equal(protect.roleRow(guild.id, first.id).owner_id, owner.id);
+  const yes = claimed.replies[0].components[0].components.find((button) => button.data.label === "Yes");
+
+  const stolen = message(guild, god, `-unprotect ${first.id}`);
+  await handleCommand(stolen, {}, "-");
+  assert.equal(titleOf(stolen), "Not Your Protection");
+  assert.match(textOf(stolen), new RegExp(owner.id));
+  assert.equal(protect.roleRow(guild.id, first.id).owner_id, owner.id);
+
+  const released = message(guild, owner, `-unprotect ${first.id}`);
+  await handleCommand(released, {}, "-");
+  assert.equal(titleOf(released), "Protection Removed");
+  assert.match(textOf(released), /no longer own/);
+  assert.equal(protect.roleRow(guild.id, first.id), null);
+
+  let updated;
+  await protect.handleInteraction({
+    customId: yes.data.custom_id,
+    isButton: () => true,
+    isRoleSelectMenu: () => false,
+    user: owner.user,
+    member: owner,
+    guild,
+    async update(payload) { updated = payload; }
+  });
+  assert.equal(updated.embeds[0].data.title, "Not Protected");
+  assert.equal(protect.roleRow(guild.id, first.id), null);
+
+  await handleCommand(message(guild, god, `-protect ${second.id}`), {}, "-");
+  const godUndo = message(guild, god, `-unprotect <@&${second.id}>`, { roles: new Map([[second.id, second]]) });
+  await handleCommand(godUndo, {}, "-");
+  assert.equal(titleOf(godUndo), "Protection Removed");
+  assert.equal(protect.roleRow(guild.id, second.id), null);
+
+  await handleCommand(message(guild, owner, `-protect ${first.id}, ${second.id}`), {}, "-");
+  const choose = message(guild, owner, `-protect <@${user.id}>`, { members: new Map([[user.id, user]]) });
+  await handleCommand(choose, {}, "-");
+  const pick = async (label) => {
+    const button = choose.replies.at(-1).components[0].components.find((item) => item.data.label === label);
+    await protect.handleInteraction({
+      customId: button.data.custom_id,
+      isButton: () => true,
+      isRoleSelectMenu: () => false,
+      user: owner.user,
+      member: owner,
+      guild,
+      async update(payload) { updated = payload; }
+    });
+  };
+  await pick("Alpha");
+  await handleCommand(choose, {}, "-");
+  await pick("Beta");
+  assert.equal(user.roles.cache.has(first.id), true);
+  assert.equal(user.roles.cache.has(second.id), true);
+
+  const blockedUser = message(guild, god, `-unprotect ${user.id}`);
+  await handleCommand(blockedUser, {}, "-");
+  assert.equal(titleOf(blockedUser), "Not Your Protection");
+  assert.equal(user.roles.cache.has(first.id), true);
+
+  const cleared = message(guild, owner, `-unprotect <@${user.id}>`, { members: new Map([[user.id, user]]) });
+  await handleCommand(cleared, {}, "-");
+  assert.equal(titleOf(cleared), "Protection Removed");
+  assert.match(textOf(cleared), new RegExp(user.id));
+  assert.equal(user.roles.cache.has(first.id), false);
+  assert.equal(user.roles.cache.has(second.id), false);
+  assert.equal(protect.roleRow(guild.id, first.id).owner_id, owner.id);
+  const mine = message(guild, owner, "-protected");
+  await handleCommand(mine, {}, "-");
+  assert.match(textOf(mine), /not protecting anyone/);
+
+  const removedRole = message(guild, owner, `-unprotect ${ROLE_A}`);
+  await handleCommand(removedRole, {}, "-");
+  assert.equal(titleOf(removedRole), "Protection Removed");
+  assert.match(textOf(removedRole), /no longer own/);
+
+  const missing = message(guild, owner, `-unprotect ${ROLE_A}`);
+  await handleCommand(missing, {}, "-");
+  assert.equal(titleOf(missing), "Not Protected");
+
+  const bare = message(guild, owner, "-unprotect");
+  await handleCommand(bare, {}, "-");
+  assert.match(textOf(bare), /\*\*Command:\*\* unprotect/);
+  assert.match(textOf(bare), /Gods and the server owner/);
+  assert.match(bare.replies[0].embeds[0].data.footer.text, /Command 2\/5/);
+
+  const catalog = require("../vouch/catalog");
+  const help = require("../vouch/help");
+  const page = catalog.commandPages("-").find((item) => item.name === "Protection");
+  assert.match(page.description, /`-protect` protect a role or user · Gods and the server owner/);
+  assert.match(page.description, /`-unprotect` undo a role or user you protected · Gods and the server owner/);
+  assert.match(page.description, /`-protected` people you protect · Everyone/);
+  assert.match(page.description, /`-plist` everyone protected · Everyone/);
+  assert.match(page.description, /`-protectedlist` everyone protected · Everyone/);
+  const rendered = help.renderHelp("protection", "-", owner);
+  assert.equal(rendered.data.title, "Protection");
+  assert.match(rendered.data.description, /Gods and the server owner protect and unprotect/);
+  assert.match(rendered.data.description, /`\-unprotect @role`/);
+  assert.match(rendered.data.description, /`\-unprotect @user`/);
+  assert.match(rendered.data.description, /\*\*Everyone\*\*/);
+  const shown = message(guild, owner, "-help");
+  await help.sendHelp(shown, "-");
+  const options = shown.replies[0].components[0].toJSON().components[0].options;
+  assert.ok(options.some((option) => option.value === "protection" && option.label === "Protection"));
+});

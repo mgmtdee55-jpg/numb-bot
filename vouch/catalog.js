@@ -55,7 +55,8 @@ const WHO = {
   "giveaways start": "Gods+", "giveaways reroll": "Gods+", "gw start": "Gods+", "gw reroll": "Gods+",
   "set gw host": "Gods+", modsetup: "Gods+",
   "vanity set": "Gods+", "vanity reward": "Gods+", vanitysetup: "Gods+", vanity: "Gods+",
-  protect: "Gods and the server owner", protected: "Everyone", plist: "Everyone", protectedlist: "Everyone"
+  protect: "Gods and the server owner", unprotect: "Gods and the server owner",
+  protected: "Everyone", plist: "Everyone", protectedlist: "Everyone"
 };
 
 function line(prefix, command, blurb) {
@@ -261,6 +262,7 @@ function categories(prefix) {
     ])],
     ["Protection", block(prefix, [
       ["protect", "protect a role or user"],
+      ["unprotect", "undo a role or user you protected"],
       ["protected", "people you protect"],
       ["plist", "everyone protected"],
       ["protectedlist", "everyone protected"]
