@@ -7,7 +7,9 @@ const vanity = require("./vanity");
 const catalog = require("./vouch/catalog");
 const vouch = require("./vouch");
 const snipe = require("./snipe");
+const proof = require("./proof");
 const stats = require("./stats");
+const quickStats = require("./quick-stats");
 const auditlog = require("./auditlog");
 const { resolveUserId } = require("./vouch/resolve");
 const { embed } = require("./vouch/ui");
@@ -74,8 +76,16 @@ async function handleCommand(message, args, prefix) {
     await snipe.handleCommand(message, name);
     return true;
   }
+  if (name === "proof" || name === "prooflist" || name === "noproof") {
+    await proof.handleCommand(message, name, args);
+    return true;
+  }
   if (name === "modstats" || name === "viewstats") {
     await stats.handleCommand(message, name, args);
+    return true;
+  }
+  if (name === "u") {
+    await quickStats.handleCommand(message, args);
     return true;
   }
   if (await auditlog.handleCommand(message, name, args)) return true;
@@ -122,7 +132,9 @@ async function handleInteraction(interaction) {
   if (id.startsWith("spanter:vanity:")) return vanity.handleInteraction(interaction);
   if (id.startsWith("spanter:protect:")) return require("./protect").handleInteraction(interaction);
   if (id.startsWith("spanter:snipe:")) return snipe.handleButton(interaction);
+  if (id.startsWith("spanter:proof:")) return proof.handleButton(interaction);
   if (id.startsWith("spanter:modstats:")) return stats.handleButton(interaction);
+  if (id.startsWith("spanter:quick:")) return quickStats.handleInteraction(interaction);
   if (id.startsWith("spanter:auditlog:")) return auditlog.handleButton(interaction);
   if (id.startsWith("spanter:serversetup:")) return require("./punish").handleSetup(interaction);
   if (id.startsWith("spanter:mute:")) return require("./punish").handleMuteButton(interaction);

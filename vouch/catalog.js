@@ -48,7 +48,8 @@ const WHO = {
   forcerolestrip: "Founder+", unforcerolestrip: "Founder+", rolestrip: "Founder+",
   help: "Everyone", showallcommands: "Everyone", afk: "Everyone", "afk mentions": "Everyone", setprefix: "Founder+",
   snipe: "Everyone", s: "Everyone", clearsnipe: "Everyone", cs: "Everyone",
-  modstats: "Everyone", viewstats: "Everyone",
+  proof: "Everyone", prooflist: "Everyone", noproof: "Everyone",
+  modstats: "Everyone", viewstats: "Everyone", u: "Everyone",
   "alias add": "Founder+", "alias remove": "Founder+", "alias removeall": "Founder+", "alias reset": "Founder+",
   "alias view": "Founder+", "alias list": "Founder+", restart: "Founder+",
   embedcreate: "Everyone", instagram: "Everyone", tiktok: "Everyone", roblox: "Everyone",
@@ -114,7 +115,11 @@ function categories(prefix) {
       ["clearsnipe", "clear deleted message history"],
       ["cs", "alias of clearsnipe"],
       ["modstats", "moderation actions issued"],
-      ["viewstats", "voice time and messages"]
+      ["viewstats", "voice time and messages"],
+      ["u", "activity card"],
+      ["proof", "images a member sent since joining"],
+      ["prooflist", "who has uploaded an image"],
+      ["noproof", "who has not uploaded an image"]
     ])],
     ["Channels", block(prefix, [
       ["lock", "lock a channel"],

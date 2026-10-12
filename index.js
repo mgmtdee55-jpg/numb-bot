@@ -28,7 +28,9 @@ const systems = require("./systems");
 const afk = require("./afk");
 const extras = require("./extras");
 const snipe = require("./snipe");
+const proof = require("./proof");
 const stats = require("./stats");
+const quickStats = require("./quick-stats");
 const personalBan = require("./personal-ban");
 const { card, loadEmojis, emojisLoaded } = require("./feedback");
 let cleanupRunning = false;
@@ -43,7 +45,8 @@ const client = new Client({
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.GuildModeration,
-    GatewayIntentBits.GuildPresences
+    GatewayIntentBits.GuildPresences,
+    GatewayIntentBits.GuildInvites
   ],
   partials: [Partials.Channel, Partials.Message]
 });
@@ -57,6 +60,7 @@ client.once("clientReady", async () => {
     startTempbanScheduler(client);
     extras.resumeGiveaways(client);
     extras.syncVanity(client).catch((error) => console.error("[vanity]", error));
+    proof.prime(client).catch((error) => console.error("[proof]", error));
     await vouch.reconcileAll(client);
     stats.reconcile(client);
     for (const guild of client.guilds.cache.values()) {
@@ -103,6 +107,7 @@ async function runCommand(message, prefix, options) {
 client.on("messageCreate", async (message) => {
   if (!message.guild || message.author?.bot) return;
   snipe.remember(message);
+  proof.remember(message);
   stats.noteMessage(message);
   await emojisLoaded();
   const prefix = vouch.getPrefix(message.guild.id);
@@ -111,7 +116,13 @@ client.on("messageCreate", async (message) => {
   } catch (error) {
     console.error("[afk]", error);
   }
-  if (!message.content.startsWith(prefix)) return;
+  if (!message.content.startsWith(prefix)) {
+    if (quickStats.isInvocation(message.content)) {
+      rememberCommand(message);
+      await quickStats.handleMessage(message).catch((error) => console.error("[quick stats]", error));
+    }
+    return;
+  }
   rememberCommand(message);
   await runCommand(message, prefix);
 });
@@ -121,6 +132,7 @@ client.on("messageUpdate", async (before, after) => {
     if (after.partial) after = await after.fetch();
     if (!after?.guild || after.author?.bot) return;
     snipe.remember(after);
+    proof.remember(after);
     if (!after.member) after.member = await after.guild.members.fetch(after.author.id).catch(() => null);
     await emojisLoaded();
     const prefix = vouch.getPrefix(after.guild.id);
@@ -198,8 +210,13 @@ client.on("guildMemberAdd", (member) => {
     console.error(`[personal ban join] ${member.guild.id}:${member.id}`, error);
   }).then(() => vouch.handleGuildMemberAdd(member)).catch((error) => {
     console.error(`[vouch join] ${member.guild.id}:${member.id}`, error);
+  }).then(() => proof.noteJoin(member)).catch((error) => {
+    console.error(`[proof join] ${member.guild.id}:${member.id}`, error);
   });
 });
+
+client.on("inviteCreate", (invite) => proof.cacheInvite(invite));
+client.on("inviteDelete", (invite) => proof.forgetInvite(invite));
 
 client.on("guildMemberRemove", (member) => {
   vouch.handleGuildMemberRemove(member);

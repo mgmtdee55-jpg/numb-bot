@@ -122,6 +122,7 @@ function botText(prefix) {
     `\`${p}clearsnipe\` / \`${p}cs\` — clear that snipe history`,
     `\`${p}modstats [@user]\` — warns, kicks, bans, and mutes they issued`,
     `\`${p}viewstats [@user]\` — voice time and messages`,
+    `\`${p}u [@user]\` / \`s-u [@user]\` — activity card`,
     `\`${p}setprefix <prefix>\` — persists after restart`,
     `\`${p}embedcreate\` — build an embed`,
     `\`${p}alias add <shortcut> <command>\``,
@@ -151,7 +152,10 @@ function infoText(prefix) {
     `\`${p}banner [@user]\``,
     `\`${p}serverinfo\``,
     `\`${p}userinfo [@user]\``,
-    `\`${p}roles\``
+    `\`${p}roles\``,
+    `\`${p}proof @user\` — images they sent since they joined`,
+    `\`${p}prooflist\` — who has uploaded an image`,
+    `\`${p}noproof\` — who has not uploaded an image`
   ].join("\n");
 }
 

@@ -212,6 +212,27 @@ const SPECS = {
     example: "protectedlist",
     permission: "Everyone"
   },
+  proof: {
+    name: "proof",
+    description: "Browse images a member has sent since they joined.",
+    syntax: "proof (user)",
+    example: "proof @user",
+    permission: "Everyone"
+  },
+  prooflist: {
+    name: "prooflist",
+    description: "List members who have uploaded an image since they joined.",
+    syntax: "prooflist",
+    example: "prooflist",
+    permission: "Everyone"
+  },
+  noproof: {
+    name: "noproof",
+    description: "List members who have not uploaded an image since they joined.",
+    syntax: "noproof",
+    example: "noproof",
+    permission: "Everyone"
+  },
   giveaways: {
     name: "giveaways",
     description: "Start or reroll a giveaway.",
@@ -576,6 +597,13 @@ const SPECS = {
     syntax: "viewstats (user)",
     example: "viewstats kutt"
   },
+  u: {
+    name: "u",
+    description: "Show an activity card for you or another member.",
+    syntax: "s-u (user)",
+    example: "s-u @user",
+    permission: "Everyone"
+  },
   vouchgive: {
     name: "vouch give",
     description: "Give a vouch to a member.",
@@ -697,6 +725,7 @@ const SPECS = {
 const GROUPS = {
   ban: ["ban", "bancheck", "banpurge", "hardban", "softban", "tempban", "unban", "foreverban", "foreverunban"],
   protect: ["protect", "unprotect", "protected", "plist", "protectedlist"],
+  proof: ["proof", "prooflist", "noproof"],
   godmode: ["godmode", "ungodmode"],
   god: ["god", "godtake", "godinfo"],
   stsu: ["stsu", "unstsu"],
