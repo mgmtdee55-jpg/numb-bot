@@ -50,6 +50,7 @@ const BUILTIN_COMMANDS = new Set([
   "proof", "prooflist", "noproof",
   "protect", "unprotect", "plist", "protectedlist", "protected", "verifiedseller",
   "securityconfig", "dangerouspermissionsadd", "dpa", "dangerouspermissionsupdate", "dpu",
+  "antinukeconfig", "antinukestatus", "antinuketest", "antinukelogs", "antinukelockdown", "antinukeunlock", "antinukewhitelist",
   "vanityprotection", "vp", "denybotjoins", "dbj", "massmemberkick", "mmk", "massmemberban", "mmb",
   "setwatchrole", "unwatchrole", "watchuser", "unwatchuser",
   "serversetup", "jail", "unjail", "cmute", "chatmute", "imute", "imagemute", "rmute", "reactionmute",

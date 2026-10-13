@@ -12,6 +12,7 @@ function stamp() {
 function bindClient(client) {
   security.bind(client);
   sellers.bind(client);
+  require("../antinuke").bind(client);
   client.on("voiceStateUpdate", (before, after) => {
     stats.trackVoice(before, after);
     require("../vc-features").observe(before, after).catch((error) => console.error("[vc feature]", error));

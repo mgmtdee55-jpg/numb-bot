@@ -70,7 +70,19 @@ const WHO = {
   massmemberban: "Owner and Anti-Nuke admins",
   setwatchrole: "Owner and Anti-Nuke admins",
   watchuser: "Owner and Anti-Nuke admins",
-  unwatchuser: "Owner and Anti-Nuke admins"
+  unwatchuser: "Owner and Anti-Nuke admins",
+  "antinuke setup": "Owner and anti-nuke administrators",
+  antinukeconfig: "Owner and anti-nuke administrators",
+  antinukestatus: "Owner and anti-nuke administrators",
+  antinuketest: "Owner and anti-nuke administrators",
+  antinukelogs: "Owner and anti-nuke administrators",
+  antinukelockdown: "Owner and anti-nuke administrators",
+  antinukeunlock: "Owner and anti-nuke administrators",
+  "antinukewhitelist add": "Owner and anti-nuke administrators",
+  "antinukewhitelist remove": "Owner and anti-nuke administrators",
+  "antinukewhitelist list": "Owner and anti-nuke administrators",
+  "antinuke snapshot": "Owner and anti-nuke administrators",
+  "antinuke recovery": "Owner and anti-nuke administrators"
 };
 
 function line(prefix, command, blurb) {
@@ -308,6 +320,18 @@ function rawCategories(prefix) {
       ["help", "open the category menu"],
       ["showallcommands", "this list"],
       ["newcommands", "what was just added"],
+      ["antinuke setup", "start anti-nuke setup"],
+      ["antinukeconfig", "edit anti-nuke settings"],
+      ["antinukestatus", "protection health"],
+      ["antinuketest", "simulated anti-nuke test"],
+      ["antinukelogs", "recent incidents"],
+      ["antinukelockdown", "start lockdown"],
+      ["antinukeunlock", "end lockdown"],
+      ["antinukewhitelist add", "trust a user or bot"],
+      ["antinukewhitelist remove", "remove a trusted account"],
+      ["antinukewhitelist list", "show trusted accounts"],
+      ["antinuke snapshot", "save channels and roles"],
+      ["antinuke recovery", "restore from a snapshot"],
       ["embedcreate", "build an embed"],
       ["setprefix", "change the prefix"],
       ["alias add", "add a shortcut"],
@@ -333,7 +357,10 @@ const VOICE_NAMES = new Set([
 
 const SECURITY_NAMES = new Set([
   "securityconfig", "dangerouspermissionsadd", "dangerouspermissionsupdate", "vanityprotection",
-  "denybotjoins", "massmemberkick", "massmemberban", "setwatchrole", "unwatchrole", "watchuser", "unwatchuser"
+  "denybotjoins", "massmemberkick", "massmemberban", "setwatchrole", "unwatchrole", "watchuser", "unwatchuser",
+  "antinuke setup", "antinukeconfig", "antinukestatus", "antinuketest", "antinukelogs", "antinukelockdown",
+  "antinukeunlock", "antinukewhitelist add", "antinukewhitelist remove", "antinukewhitelist list",
+  "antinuke snapshot", "antinuke recovery"
 ]);
 
 function commandOf(line, prefix) {
@@ -475,7 +502,13 @@ function newCommandsMessage(prefix = "-", member = null) {
     `\`${p}u @user\` — activity card`,
     `\`${p}proof @user\` — images they posted since joining`,
     `\`${p}auditlog @user\` — recent mutes, bans, and voice actions`,
-    `\`${p}unprotect\` — undo a protection you set`
+    `\`${p}unprotect\` — undo a protection you set`,
+    "",
+    "**Anti-nuke**",
+    `\`${p}antinuke setup\` — turn protection on`,
+    `\`${p}antinukeconfig\` — edit modules and thresholds`,
+    `\`${p}antinukestatus\` — what is on and the last incident`,
+    "Empty voice deletes are allowed. Deleting a voice channel with people in it kicks that person."
   ];
   const rank = member ? access.rankLine(member) : "";
   const embed = new EmbedBuilder()

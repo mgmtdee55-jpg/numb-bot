@@ -327,6 +327,7 @@ function staffRegistry(guild) {
 
 async function handleAntinuke(message, args, prefix) {
   const sub = (args[1] || "").toLowerCase();
+  if (sub === "setup" || sub === "snapshot" || sub === "recovery") return false;
   if (sub === "admins") return reply(message, "Staff Registry", staffRegistry(message.guild));
   if (sub === "vouch") {
     if ((args[2] || "").toLowerCase() === "limit") return handleVouchLimit(message, args);
@@ -363,7 +364,10 @@ async function handleAntinuke(message, args, prefix) {
     `\`${prefix}antinuke vouch limit giver <#>\``,
     `\`${prefix}antinuke vouch limit user @user <#>\``,
     `\`${prefix}antinuke vouch limit remove @user\``,
-    `\`${prefix}antinuke vouch limit view\``
+    `\`${prefix}antinuke vouch limit view\``,
+    `\`${prefix}antinuke setup\``,
+    `\`${prefix}antinuke snapshot\``,
+    `\`${prefix}antinuke recovery\``
   ].join("\n"));
 }
 

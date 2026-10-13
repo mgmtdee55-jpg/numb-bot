@@ -783,6 +783,20 @@ const SPECS = {
     example: "watchuser @user",
     permission: "Server owner and Anti-Nuke admins"
   },
+  antinukesetup: {
+    name: "antinuke setup",
+    description: "Open the anti-nuke setup wizard.",
+    syntax: "antinuke setup",
+    example: "antinuke setup",
+    permission: "Server owner and anti-nuke administrators"
+  },
+  antinukewhitelist: {
+    name: "antinukewhitelist",
+    description: "Add, remove, or list trusted anti-nuke accounts.",
+    syntax: "antinukewhitelist add|remove|list (user)",
+    example: "antinukewhitelist add @user",
+    permission: "Server owner and anti-nuke administrators"
+  },
   newcommands: {
     name: "newcommands",
     description: "Show the commands that were just added, in a few words.",
@@ -832,6 +846,7 @@ const GROUPS = {
   protect: ["protect", "unprotect", "protected", "plist", "protectedlist"],
   security: ["securityconfig", "dangerouspermissionsadd", "dangerouspermissionsupdate", "vanityprotection", "denybotjoins", "massmemberkick", "massmemberban", "setwatchrole", "watchuser"],
   verifiedseller: ["verifiedseller", "verifiedselleradd", "verifiedsellerremove", "verifiedselleraddgiver", "verifiedsellerremovegiver"],
+  antinuke: ["antinukesetup", "antinukewhitelist"],
   proof: ["proof", "prooflist", "noproof"],
   godmode: ["godmode", "ungodmode"],
   god: ["god", "godtake", "godinfo"],
