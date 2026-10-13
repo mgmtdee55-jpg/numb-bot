@@ -371,3 +371,56 @@ test("unknown executors, join bursts, rate limits, unlock, and recovery stay saf
   assert.equal(guild.channels.cache.has("keep"), true);
   assert.equal(guild.created.filter((channel) => channel.name === "keep").length, 0);
 });
+
+test("server name and vanity are restored once, and antinukealloff stops every action", async () => {
+  const guild = makeGuild();
+  const owner = makeMember(guild, OWNER, "owner");
+  makeMember(guild, ROGUE, "rogue");
+  activate(guild);
+  const names = [];
+  const vanities = [];
+  guild.setName = async (name) => {
+    names.push(name);
+    guild.name = name;
+  };
+  guild.client.rest = {
+    patch: async (_route, options) => {
+      vanities.push(options.body.code);
+      guild.vanityURLCode = options.body.code;
+    }
+  };
+  guild.fetchAuditLogs = async () => ({
+    entries: new Map([["owner", { id: "owner-edit", executorId: OWNER, createdTimestamp: Date.now() }]])
+  });
+  guild.name = "New Name";
+  guild.vanityURLCode = "newcode";
+  await engine.handleGuildUpdate({ id: guild.id, name: "Old Name", vanityURLCode: "oldcode" }, guild, true);
+  assert.deepEqual(names, []);
+  assert.deepEqual(vanities, []);
+
+  guild.fetchAuditLogs = async () => ({
+    entries: new Map([["rogue", { id: "rogue-edit", executorId: ROGUE, createdTimestamp: Date.now() }]])
+  });
+  guild.name = "Hacked";
+  guild.vanityURLCode = "hacked";
+  await engine.handleGuildUpdate({ id: guild.id, name: "New Name", vanityURLCode: "newcode" }, guild, true);
+  assert.deepEqual(names, ["New Name"]);
+  assert.deepEqual(vanities, ["newcode"]);
+
+  guild.name = "New Name";
+  guild.vanityURLCode = "newcode";
+  await engine.handleGuildUpdate({ id: guild.id, name: "Hacked", vanityURLCode: "hacked" }, guild, true);
+  await engine.handleGuildUpdate({ id: guild.id, name: "Hacked", vanityURLCode: "hacked" }, guild, true);
+  assert.deepEqual(names, ["New Name"]);
+  assert.deepEqual(vanities, ["newcode"]);
+
+  const off = await run(guild, owner, "-antinukealloff");
+  assert.equal(titleOf(off), "Anti-Nuke Off");
+  assert.equal(store.get(guild.id).policy.halted, true);
+  assert.equal(store.get(guild.id).active, 0);
+  guild.name = "Changed Again";
+  await engine.handleGuildUpdate({ id: guild.id, name: "New Name", vanityURLCode: "newcode" }, guild, true);
+  assert.deepEqual(names, ["New Name"]);
+  const locked = await run(guild, owner, "-antinukelockdown");
+  assert.equal(titleOf(locked), "Anti-Nuke Off");
+});

@@ -82,7 +82,8 @@ const WHO = {
   "antinukewhitelist remove": "Owner and anti-nuke administrators",
   "antinukewhitelist list": "Owner and anti-nuke administrators",
   "antinuke snapshot": "Owner and anti-nuke administrators",
-  "antinuke recovery": "Owner and anti-nuke administrators"
+  "antinuke recovery": "Owner and anti-nuke administrators",
+  antinukealloff: "Owner and anti-nuke administrators"
 };
 
 function line(prefix, command, blurb) {
@@ -332,6 +333,7 @@ function rawCategories(prefix) {
       ["antinukewhitelist list", "show trusted accounts"],
       ["antinuke snapshot", "save channels and roles"],
       ["antinuke recovery", "restore from a snapshot"],
+      ["antinukealloff", "turn every anti-nuke action off"],
       ["embedcreate", "build an embed"],
       ["setprefix", "change the prefix"],
       ["alias add", "add a shortcut"],
@@ -360,7 +362,7 @@ const SECURITY_NAMES = new Set([
   "denybotjoins", "massmemberkick", "massmemberban", "setwatchrole", "unwatchrole", "watchuser", "unwatchuser",
   "antinuke setup", "antinukeconfig", "antinukestatus", "antinuketest", "antinukelogs", "antinukelockdown",
   "antinukeunlock", "antinukewhitelist add", "antinukewhitelist remove", "antinukewhitelist list",
-  "antinuke snapshot", "antinuke recovery"
+  "antinuke snapshot", "antinuke recovery", "antinukealloff"
 ]);
 
 function commandOf(line, prefix) {
@@ -508,7 +510,8 @@ function newCommandsMessage(prefix = "-", member = null) {
     `\`${p}antinuke setup\` — turn protection on`,
     `\`${p}antinukeconfig\` — edit modules and thresholds`,
     `\`${p}antinukestatus\` — what is on and the last incident`,
-    "Empty voice deletes are allowed. Deleting a voice channel with people in it kicks that person."
+    "Empty voice deletes are allowed. Deleting a voice channel with people in it kicks that person.",
+    `\`${p}antinukealloff\` — stop every anti-nuke action`
   ];
   const rank = member ? access.rankLine(member) : "";
   const embed = new EmbedBuilder()

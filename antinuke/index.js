@@ -111,9 +111,17 @@ async function handleCommand(message, args, prefix) {
   const name = commandName(args, prefix);
   const sub = String(args[1] || "").toLowerCase();
   if (name === "antinuke" && sub === "vouch") return false;
-  const known = ["antinuke", "antinukeconfig", "antinukestatus", "antinuketest", "antinukelogs", "antinukelockdown", "antinukeunlock", "antinukewhitelist"];
+  const known = ["antinuke", "antinukeconfig", "antinukestatus", "antinuketest", "antinukelogs", "antinukelockdown", "antinukeunlock", "antinukewhitelist", "antinukealloff"];
   if (!known.includes(name)) return false;
   if (!panel.canConfigure(message.member)) return denied(message, `Tried ${name}`);
+  if (name === "antinukealloff") {
+    store.halt(message.guild.id, message.author.id);
+    return reply(message, "Anti-Nuke Off", "Every anti-nuke action is off. Server name and vanity will not be changed. Run `-antinuke setup` and confirm it when you want protection back.");
+  }
+  const halted = store.get(message.guild.id).policy.halted;
+  if (halted && !(name === "antinuke" && sub === "setup")) {
+    return reply(message, "Anti-Nuke Off", "Every anti-nuke action is off. Run `-antinuke setup` and confirm it to turn protection back on.");
+  }
   if (name === "antinukeconfig") return panel.openDashboard(message);
   if (name === "antinukestatus") return reply(message, "Anti-Nuke Status", statusText(message.guild));
   if (name === "antinuketest") return runTest(message);
@@ -132,7 +140,8 @@ async function handleCommand(message, args, prefix) {
       `\`${prefix}antinukeunlock\``,
       `\`${prefix}antinukewhitelist add @user\``,
       `\`${prefix}antinuke snapshot\``,
-      `\`${prefix}antinuke recovery\``
+      `\`${prefix}antinuke recovery\``,
+      `\`${prefix}antinukealloff\``
     ].join("\n"));
   }
   if (sub === "setup") return panel.openWizard(message);

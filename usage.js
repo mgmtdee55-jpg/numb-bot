@@ -790,6 +790,13 @@ const SPECS = {
     example: "antinuke setup",
     permission: "Server owner and anti-nuke administrators"
   },
+  antinukealloff: {
+    name: "antinukealloff",
+    description: "Turn off every anti-nuke action immediately.",
+    syntax: "antinukealloff",
+    example: "antinukealloff",
+    permission: "Server owner and anti-nuke administrators"
+  },
   antinukewhitelist: {
     name: "antinukewhitelist",
     description: "Add, remove, or list trusted anti-nuke accounts.",
@@ -846,7 +853,7 @@ const GROUPS = {
   protect: ["protect", "unprotect", "protected", "plist", "protectedlist"],
   security: ["securityconfig", "dangerouspermissionsadd", "dangerouspermissionsupdate", "vanityprotection", "denybotjoins", "massmemberkick", "massmemberban", "setwatchrole", "watchuser"],
   verifiedseller: ["verifiedseller", "verifiedselleradd", "verifiedsellerremove", "verifiedselleraddgiver", "verifiedsellerremovegiver"],
-  antinuke: ["antinukesetup", "antinukewhitelist"],
+  antinuke: ["antinukesetup", "antinukewhitelist", "antinukealloff"],
   proof: ["proof", "prooflist", "noproof"],
   godmode: ["godmode", "ungodmode"],
   god: ["god", "godtake", "godinfo"],

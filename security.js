@@ -460,9 +460,17 @@ async function handleRole(guild, entry, created) {
   logEvent(guild, "events", title, `<@${executor}> changed <@&${roleId}>. The change was reversed. ${punishment === "banned" ? "Banned." : "The ban did not go through."}`);
 }
 
+function halted(guildId) {
+  try {
+    return !!require("./antinuke/store").get(guildId).policy.halted;
+  } catch {
+    return false;
+  }
+}
+
 async function handleVanity(guild, entry) {
   const row = load(guild.id);
-  if (!row.vanity) return;
+  if (!row.vanity || halted(guild.id)) return;
   const change = changesOf(entry).find((item) => item.key === "vanity_url_code");
   if (!change && guild.vanityURLCode === row.vanity_code) return;
   const next = change ? changeValue(change, "new") : guild.vanityURLCode;
@@ -609,6 +617,7 @@ async function handleMemberAdd(member) {
 
 async function handleGuildUpdate(before, after) {
   if (!after?.id || before?.vanityURLCode === after.vanityURLCode) return;
+  if (halted(after.id)) return;
   const row = load(after.id);
   if (!row.vanity) return;
   if (String(after.vanityURLCode || "") === String(row.vanity_code || "")) return;

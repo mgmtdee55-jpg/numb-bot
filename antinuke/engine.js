@@ -19,6 +19,8 @@ const emptyVoice = new Map();
 const occupiedVoice = new Map();
 const destructiveAt = new Map();
 const botStrikes = new Map();
+const ownWrites = new Map();
+const restoreCooldown = new Map();
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -53,6 +55,31 @@ function enqueue(guildId, job) {
 
 function selfId(guild) {
   return String(guild?.client?.user?.id || guild?.members?.me?.id || "");
+}
+
+function rememberWrite(guildId, kind, value) {
+  const row = ownWrites.get(String(guildId)) || {};
+  row[kind] = value == null ? "" : String(value);
+  row.until = Date.now() + 20000;
+  ownWrites.set(String(guildId), row);
+}
+
+function forgetWrite(guildId, kind) {
+  const row = ownWrites.get(String(guildId));
+  if (row) delete row[kind];
+}
+
+function isOwnWrite(guildId, kind, value) {
+  const row = ownWrites.get(String(guildId));
+  if (!row || row.until < Date.now()) return false;
+  return row[kind] === (value == null ? "" : String(value));
+}
+
+function cooling(guildId, kind) {
+  const key = `${guildId}:${kind}`;
+  if ((restoreCooldown.get(key) || 0) > Date.now()) return true;
+  restoreCooldown.set(key, Date.now() + 20000);
+  return false;
 }
 
 function isOwner(guild, userId) {
@@ -250,6 +277,7 @@ async function kick(guild, userId, reason, apply) {
 }
 
 async function lockdown(guild, config, executorId, reason, apply) {
+  if (config.policy?.halted) return { started: false, result: "anti-nuke is off" };
   if (!config.modules.lockdown && !config.lockdown.restrictOps) return { started: false, result: "lockdown module off" };
   if (config.lockdownActive) return { started: false, result: "already locked down" };
   if (!apply) return { started: true, result: "simulated" };
@@ -456,7 +484,7 @@ function decideCounts(config, guildId, executorId, action, at) {
 
 async function consider(guild, event, apply) {
   const config = store.get(guild.id);
-  if (!config.active) return { ignored: true, reason: "inactive" };
+  if (!config.active || config.policy.halted) return { ignored: true, reason: "inactive" };
   const at = Number(event.at) || Date.now();
   if (Date.now() - at > STALE_MS) {
     await record(guild, config, {
@@ -574,7 +602,7 @@ async function handleMemberAdd(member, apply = true) {
   const guild = member?.guild;
   if (!guild) return { ignored: true };
   const config = store.get(guild.id);
-  if (!config.active || !config.modules.antiRaid) return { ignored: true };
+  if (!config.active || config.policy.halted || !config.modules.antiRaid) return { ignored: true };
   const at = Date.now();
   const count = hit(guild.id, "raid", "raid", at, config.thresholds.raidWarning.seconds);
   const emergency = hit(guild.id, "raid", "raidEmergency", at, config.thresholds.raidEmergency.seconds);
@@ -665,7 +693,7 @@ async function handleAudit(guild, entry, apply = true) {
   }
   if (action === AuditLogEvent.BotAdd) {
     const config = store.get(guild.id);
-    if (!config.active || !config.modules.compromisedBot) return { ignored: true };
+    if (!config.active || config.policy.halted || !config.modules.compromisedBot) return { ignored: true };
     return record(guild, config, {
       at,
       severity: "info",
@@ -681,7 +709,7 @@ async function handleAudit(guild, entry, apply = true) {
 
 async function handleRoleUpdate(guild, entry, apply) {
   const config = store.get(guild.id);
-  if (!config.active || !config.modules.permissions) return { ignored: true };
+  if (!config.active || config.policy.halted || !config.modules.permissions) return { ignored: true };
   const change = changesOf(entry).find((item) => item.key === "permissions");
   if (!change) return { ignored: true };
   const before = bitfield(change.old || change.old_value);
@@ -721,59 +749,67 @@ async function handleRoleUpdate(guild, entry, apply) {
   }, apply);
 }
 
+async function recentGuildEditor(guild) {
+  const logs = await guild.fetchAuditLogs?.({ type: AuditLogEvent.GuildUpdate, limit: 5 }).catch(() => null);
+  const entries = logs?.entries?.values ? [...logs.entries.values()] : [];
+  const fresh = entries.find((entry) => Date.now() - Number(entry.createdTimestamp || 0) < STALE_MS);
+  return fresh ? { id: fresh.id, executorId: executorId(fresh) } : null;
+}
+
+async function restoreSetting(guild, kind, before, after, apply) {
+  if (isOwnWrite(guild.id, kind, after)) return { ignored: true, reason: "own restore" };
+  const editor = await recentGuildEditor(guild);
+  const executor = editor?.executorId || null;
+  if (!executor || isSelf(guild, executor) || isOwner(guild, executor)) {
+    return { ignored: true, reason: executor ? "allowed" : "unknown executor" };
+  }
+  if (kind === "vanity" && legacyCovers(guild, "vanity")) return { ignored: true, reason: "left to the existing security module" };
+  if (cooling(guild.id, kind)) return { ignored: true, reason: "cooldown" };
+  let restored = false;
+  if (apply && kind === "vanity" && before != null && before !== "" && typeof guild.client?.rest?.patch === "function") {
+    rememberWrite(guild.id, "vanity", before);
+    const result = await attempt("vanity", () => guild.client.rest.patch(Routes.guildVanityUrl(guild.id), {
+      body: { code: before },
+      reason: "Anti-nuke restored the server vanity"
+    }));
+    restored = !!result.ok;
+    if (!restored) forgetWrite(guild.id, "vanity");
+  }
+  if (apply && kind === "name" && before && typeof guild.setName === "function") {
+    rememberWrite(guild.id, "name", before);
+    const result = await attempt("server name", () => guild.setName(before, "Anti-nuke restored the server name"));
+    restored = !!result.ok;
+    if (!restored) forgetWrite(guild.id, "name");
+  }
+  return consider(guild, {
+    id: editor?.id || `${kind}:${guild.id}:${before}`,
+    action: kind === "vanity" ? "vanity" : "serverSettings",
+    module: kind === "vanity" ? "vanity" : "serverSettings",
+    executorId: executor,
+    targetId: guild.id,
+    at: Date.now(),
+    detail: restored ? `${kind} restored once.` : `${kind} changed and was not restored again.`
+  }, apply);
+}
+
 async function handleGuildUpdate(before, after, apply = true) {
   if (!after?.id) return { ignored: true };
   const config = store.get(after.id);
-  if (!config.active) return { ignored: true };
-  const at = Date.now();
+  if (!config.active || config.policy.halted) return { ignored: true, reason: "inactive" };
+  let result = { ignored: true };
   if (config.modules.vanity && before?.vanityURLCode !== after.vanityURLCode) {
-    let executor = null;
-    const logs = await after.fetchAuditLogs?.({ type: AuditLogEvent.GuildUpdate, limit: 1 }).catch(() => null);
-    const entry = logs?.entries?.first?.() || [...(logs?.entries?.values?.() || [])][0];
-    if (entry) executor = executorId(entry);
-    let restored = false;
-    if (apply && before?.vanityURLCode && typeof after.client?.rest?.patch === "function") {
-      const result = await attempt("vanity", () => after.client.rest.patch(Routes.guildVanityUrl(after.id), {
-        body: { code: before.vanityURLCode },
-        reason: "Anti-nuke restored the server vanity"
-      }));
-      restored = !!result.ok;
-      if (restored) after.vanityURLCode = before.vanityURLCode;
-    }
-    return consider(after, {
-      id: entry?.id || `vanity:${after.id}:${after.vanityURLCode}`,
-      action: "vanity",
-      module: "vanity",
-      executorId: executor,
-      targetId: after.id,
-      at,
-      detail: restored ? `Vanity restored to ${before.vanityURLCode}.` : "Vanity changed. It cannot always be restored."
-    }, apply);
+    result = await restoreSetting(after, "vanity", before?.vanityURLCode, after.vanityURLCode, apply);
   }
   if (config.modules.serverSettings && before?.name && after.name && before.name !== after.name) {
-    const logs = await after.fetchAuditLogs?.({ type: AuditLogEvent.GuildUpdate, limit: 1 }).catch(() => null);
-    const entry = [...(logs?.entries?.values?.() || [])][0];
-    let restored = false;
-    if (apply && typeof after.setName === "function") {
-      const result = await attempt("server name", () => after.setName(before.name, "Anti-nuke restored the server name"));
-      restored = !!result.ok;
-    }
-    return consider(after, {
-      id: entry?.id || `name:${after.id}:${at}`,
-      action: "serverSettings",
-      module: "serverSettings",
-      executorId: entry ? executorId(entry) : null,
-      targetId: after.id,
-      at,
-      detail: restored ? "Server name restored." : "Server name changed and was not restored."
-    }, apply);
+    const named = await restoreSetting(after, "name", before.name, after.name, apply);
+    if (result.ignored) result = named;
   }
-  return { ignored: true };
+  return result;
 }
 
 async function noteBot(guild, executorId, action, apply) {
   const config = store.get(guild.id);
-  if (!config.active || !config.modules.compromisedBot) return { ignored: true };
+  if (!config.active || config.policy.halted || !config.modules.compromisedBot) return { ignored: true };
   const row = trusted(guild, executorId);
   if (row?.kind === "bot" && config.policy.botsDestructive) {
     return record(guild, config, {
@@ -803,7 +839,7 @@ async function noteBot(guild, executorId, action, apply) {
 
 async function tickSnapshots(guild) {
   const config = store.get(guild.id);
-  if (!config.active || !config.modules.snapshots) return false;
+  if (!config.active || config.policy.halted || !config.modules.snapshots) return false;
   const latest = store.snapshots(guild.id, 1)[0];
   if (latest && Date.now() - latest.at < config.snapshotMinutes * 60 * 1000) return false;
   saveSnapshot(guild, config);
@@ -863,6 +899,8 @@ function resetForTests() {
   occupiedVoice.clear();
   destructiveAt.clear();
   botStrikes.clear();
+  ownWrites.clear();
+  restoreCooldown.clear();
 }
 
 module.exports = {

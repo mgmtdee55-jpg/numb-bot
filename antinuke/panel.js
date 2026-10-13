@@ -476,6 +476,7 @@ async function apply(interaction, guild, session, action) {
     adjust(config, session, action);
     if (action === "confirm" && session.step === 8) {
       config.active = 1;
+      config.policy.halted = false;
       store.clearWhitelist(guild.id);
       for (const row of session.draftList || []) store.addWhitelist(guild.id, row.user_id, row.kind, row.name, row.added_by);
       store.save(guild.id, config, interaction.user.id, "activate");

@@ -68,7 +68,8 @@ function policy() {
     bypassLockdown: false,
     dangerousChanges: false,
     botsDestructive: false,
-    modifySettings: false
+    modifySettings: false,
+    halted: false
   };
 }
 
@@ -328,6 +329,15 @@ function snapshots(guildId, limit = 5) {
   return statements.listSnapshots.all(String(guildId), limit);
 }
 
+function halt(guildId, userId) {
+  const config = get(guildId);
+  config.active = 0;
+  config.policy.halted = true;
+  config.lockdownActive = 0;
+  config.lockState = null;
+  return save(guildId, config, userId, "antinukealloff");
+}
+
 function snapshot(guildId, id) {
   const row = statements.getSnapshot.get(String(guildId), Number(id));
   if (!row) return null;
@@ -355,5 +365,6 @@ module.exports = {
   lastIncident,
   addSnapshot,
   snapshots,
-  snapshot
+  snapshot,
+  halt
 };
