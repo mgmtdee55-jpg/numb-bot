@@ -902,3 +902,66 @@ test("roles lists member counts and pages for the opener", async () => {
   assert.match(found.updated.embeds[0].data.description, /<@&222000000000000010> → 1 member/);
   assert.equal(found.updated.embeds[0].data.footer.text, "12 roles, Page 2/2");
 });
+
+test("vchistory shows who is in a call and when they joined or left", async () => {
+  const guild = makeGuild();
+  guild.id = "123456789012345678";
+  guild.roles.cache.set(guild.id, { id: guild.id, name: "@everyone", position: 0, managed: false });
+  guild.roles.everyone = guild.roles.cache.get(guild.id);
+  const founder = makeMember(guild, "111000000000000040", { name: "founder" });
+  const member = makeMember(guild, "111000000000000041", { name: "guest" });
+  const staying = makeMember(guild, "111000000000000042", { name: "staying" });
+  const other = makeMember(guild, "111000000000000043", { name: "other" });
+  store.setStaff(guild.id, founder.id, "founder", OWNER);
+  const channel = { id: "444000000000000201", type: ChannelType.GuildVoice, name: "late-call", guild, members: new Map() };
+  const elsewhere = { id: "444000000000000202", type: ChannelType.GuildVoice, name: "elsewhere", guild, members: new Map() };
+  const textChannel = { id: "444000000000000203", type: ChannelType.GuildText, name: "general", guild };
+  guild.channels.cache.set(channel.id, channel);
+  guild.channels.cache.set(elsewhere.id, elsewhere);
+  guild.channels.cache.set(textChannel.id, textChannel);
+  const voice = require("../systems/voice");
+  const state = (person, channelId) => ({
+    guild,
+    member: person,
+    id: person.id,
+    channelId,
+    serverMute: false,
+    serverDeaf: false
+  });
+
+  await voice.enforceVoice(state(member, null), state(member, channel.id));
+  await voice.enforceVoice(state(staying, null), state(staying, channel.id));
+  await voice.enforceVoice(state(member, channel.id), state(member, elsewhere.id));
+  await voice.enforceVoice(state(other, null), state(other, elsewhere.id));
+  staying.voice.channel = channel;
+  staying.voice.channelId = channel.id;
+  channel.members.set(staying.id, staying);
+  founder.voice.channel = channel;
+  founder.voice.channelId = channel.id;
+  channel.members.set(founder.id, founder);
+
+  assert.equal(titleOf(await run(guild, member, `-vchistory ${channel.id}`)), "Rank Required");
+  assert.match(textOf(await run(guild, founder, "-vchistory")), /vchistory \(channel\)/);
+  assert.equal(titleOf(await run(guild, founder, `-vchistory ${textChannel.id}`)), "Not a Voice Channel");
+  assert.equal(titleOf(await run(guild, founder, `-vchistory https://discord.com/channels/999000000000000001/${channel.id}`)), "Wrong Server");
+
+  const shown = await run(guild, founder, `-vchistory <#${channel.id}>`);
+  const text = textOf(shown);
+  assert.equal(titleOf(shown), "Call History");
+  assert.match(text, new RegExp(`<#${channel.id}>`));
+  assert.match(text, new RegExp(`<@${member.id}> joined`));
+  assert.match(text, new RegExp(`<@${member.id}> left`));
+  assert.match(text, new RegExp(`<@${staying.id}> — joined <t:\\d+:F>`));
+  assert.match(text, new RegExp(`<@${founder.id}> — in the call now`));
+  assert.doesNotMatch(text, new RegExp(other.id));
+
+  const linked = await run(guild, founder, `-vchistory https://discord.com/channels/${guild.id}/${channel.id}`);
+  assert.match(textOf(linked), new RegExp(`<@${member.id}> left`));
+  const named = await run(guild, founder, "-vchistory late-call");
+  assert.match(textOf(named), new RegExp(`<@${staying.id}>`));
+
+  store.addCallEvent(guild.id, "444000000000000299", member.id, "join");
+  const gone = await run(guild, founder, "-vchistory 444000000000000299");
+  assert.match(textOf(gone), new RegExp(`<@${member.id}> joined`));
+  assert.match(textOf(gone), /Nobody is connected right now/);
+});

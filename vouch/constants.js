@@ -42,7 +42,7 @@ const BUILTIN_COMMANDS = new Set([
   "rank", "ranks", "god", "m", "management", "mgmt", "managegod", "logging", "logs",
   "restart", "antinuke", "avatar", "banner", "serverinfo", "userinfo", "roles", "lockdown", "unlockdown",
   "ceo", "founder", "boss", "grant", "grants", "revoke", "ungrant", "hide", "unhide", "lockall", "unlockall", "nuke",
-  "forceownership", "voiceoverride", "dragall", "voicehistory", "godmode", "ungodmode",
+  "forceownership", "voiceoverride", "dragall", "voicehistory", "vchistory", "godmode", "ungodmode",
   "muteall", "unmuteall", "shield", "unshield", "voiceshield", "follow", "unfollow", "chain", "bring",
   "inspect", "forceclaim", "stfu", "unstfu", "stsu", "unstsu", "modsetup", "modlogreset", "voice", "rankinfo", "unrank", "afk",
   "embedcreate", "instagram", "ig", "insta", "tiktok", "roblox", "giveaways", "gw", "voicemaster", "set",

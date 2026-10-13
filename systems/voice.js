@@ -4,7 +4,7 @@ const store = require("./store");
 const access = require("./access");
 const cooldowns = require("./cooldowns");
 const stats = require("../stats");
-const { reply } = require("../vouch/ui");
+const { embed, reply } = require("../vouch/ui");
 const { replyUsage } = require("../usage");
 
 const moving = new Map();
@@ -133,6 +133,113 @@ async function voiceHistory(message, userId) {
   if (!rows.length) return reply(message, "Voice History", "No voice events have been recorded yet.");
   const lines = rows.map((row) => `<@${row.user_id}> — ${row.summary}`).join("\n");
   return reply(message, "Voice History", lines);
+}
+
+function stamp(createdAt) {
+  const seconds = Math.floor(Number(createdAt) / 1000);
+  if (!seconds) return "unknown time";
+  return `<t:${seconds}:F> (<t:${seconds}:R>)`;
+}
+
+function openJoinAt(rows, userId) {
+  let joinedAt = null;
+  for (const row of rows) {
+    if (String(row.user_id) !== String(userId)) continue;
+    joinedAt = row.action === "join" ? row.created_at : null;
+  }
+  return joinedAt;
+}
+
+function packLines(lines) {
+  const bodies = [];
+  let bucket = [];
+  let size = 0;
+  for (const line of lines) {
+    const nextSize = size + (bucket.length ? 1 : 0) + line.length;
+    if (bucket.length && nextSize > 3600) {
+      bodies.push(bucket.join("\n"));
+      bucket = [line];
+      size = line.length;
+      continue;
+    }
+    bucket.push(line);
+    size = nextSize;
+  }
+  if (bucket.length) bodies.push(bucket.join("\n"));
+  return bodies;
+}
+
+function fitBodies(intro, historyLines) {
+  let omitted = 0;
+  let lines = intro.concat(historyLines);
+  let bodies = packLines(lines);
+  while (bodies.length > 10 && omitted < historyLines.length) {
+    omitted = Math.min(historyLines.length, omitted + Math.max(1, (bodies.length - 10) * 12));
+    const note = `Showing the latest **${historyLines.length - omitted}** of **${historyLines.length}** joins and leaves.`;
+    lines = intro.concat([note], historyLines.slice(omitted));
+    bodies = packLines(lines);
+  }
+  return bodies.slice(0, 10);
+}
+
+function callIntro(channelId, live, rows) {
+  const present = live.map((member) => {
+    const joinedAt = openJoinAt(rows, member.id);
+    return joinedAt
+      ? `<@${member.id}> — joined ${stamp(joinedAt)}`
+      : `<@${member.id}> — in the call now. Join time was not recorded.`;
+  }).sort();
+  const lines = [
+    `**Channel:** <#${channelId}>`,
+    present.length ? `**In the call (${present.length})**` : "**In the call**",
+    ...(present.length ? present : ["Nobody is connected right now."]),
+    "",
+    rows.length ? `**Joins and leaves (${rows.length})**` : "**Joins and leaves**"
+  ];
+  if (!rows.length) lines.push("No joins or leaves have been recorded for this call yet.");
+  return lines;
+}
+
+async function loadCallChannel(message, channelId) {
+  const channel = message.guild.channels.cache.get(channelId) || await message.guild.channels.fetch(channelId).catch(() => null);
+  if (channel && !isVoiceChannel(channel)) return { error: ["Not a Voice Channel", "That channel is not a voice channel."] };
+  if (!channel) {
+    const rows = store.listCallHistory(message.guild.id, channelId, 1);
+    if (!rows.length) return { error: ["Voice Channel Required", "I could not find that voice channel."] };
+    return { channel: null, channelId };
+  }
+  return { channel, channelId: channel.id };
+}
+
+async function resolveCallTarget(message, argument) {
+  const text = String(argument || "").trim();
+  const link = text.match(/https?:\/\/(?:[\w-]+\.)?discord(?:app)?\.com\/channels\/(\d{17,20})\/(\d{17,20})/i);
+  if (link) {
+    if (link[1] !== String(message.guild.id)) return { error: ["Wrong Server", "That channel link is for another server."] };
+    return loadCallChannel(message, link[2]);
+  }
+  const mentioned = message.mentions?.channels?.first?.();
+  if (mentioned && (text.includes(`<#${mentioned.id}>`) || text === mentioned.id)) {
+    if (!isVoiceChannel(mentioned)) return { error: ["Not a Voice Channel", "Mention a voice channel, or paste its link or ID."] };
+    return { channel: mentioned, channelId: mentioned.id };
+  }
+  const id = text.replace(/[<#>]/g, "");
+  if (/^\d{17,20}$/.test(id)) return loadCallChannel(message, id);
+  const named = await resolveVoiceChannel(message, text);
+  if (named) return { channel: named, channelId: named.id };
+  return { error: ["Voice Channel Required", "Use a voice channel mention, link, or ID."] };
+}
+
+async function channelHistory(message, argument) {
+  if (!String(argument || "").trim()) return replyUsage(message, "vchistory");
+  const resolved = await resolveCallTarget(message, argument);
+  if (resolved.error) return reply(message, resolved.error[0], resolved.error[1]);
+  const rows = store.listCallHistory(message.guild.id, resolved.channelId, 400);
+  const live = (resolved.channel ? occupants(resolved.channel) : []).filter((member) => member?.id && !member.user?.bot);
+  const historyLines = rows.map((row) => `${stamp(row.created_at)} — <@${row.user_id}> ${row.action === "leave" ? "left" : "joined"}`);
+  const bodies = fitBodies(callIntro(resolved.channelId, live, rows), historyLines);
+  const embeds = bodies.map((body) => embed("Call History", body, { guild: message.guild }));
+  return message.reply({ embeds });
 }
 
 async function setVoiceFlag(message, user, flag, enabled, title) {
@@ -269,6 +376,7 @@ async function runRankCommand(message, command, target, channelArgument) {
   if (command === "forceclaim") return takeOwnership(message, true);
   if (command === "voiceoverride") return voiceOverride(message);
   if (command === "dragall") return dragAll(message, channelArgument);
+  if (command === "vchistory") return channelHistory(message, channelArgument);
   if (command === "voicehistory") return voiceHistory(message, named ? target?.id : null);
   if (command === "godmode" || command === "ungodmode") {
     const user = target || message.member;
@@ -367,6 +475,7 @@ async function enforceVoice(oldState, newState) {
   store.saveGuard(guild.id, member.id, { lastChannelId: channelId || oldState.channelId || null });
   const summary = describeVoice(oldState, newState);
   if (summary) store.addHistory(guild.id, member.id, summary);
+  recordCall(guild.id, member.id, oldState, newState);
   const guard = store.getGuard(guild.id, member.id);
   const token = guardKey(guild.id, member.id);
   if (guard) {
@@ -412,6 +521,23 @@ async function enforceVoice(oldState, newState) {
         }
       }
     }
+  }
+}
+
+function recordCall(guildId, userId, before, after) {
+  const left = before.channelId || null;
+  const joined = after.channelId || null;
+  if (!left && joined) {
+    store.addCallEvent(guildId, joined, userId, "join");
+    return;
+  }
+  if (left && !joined) {
+    store.addCallEvent(guildId, left, userId, "leave");
+    return;
+  }
+  if (left && joined && String(left) !== String(joined)) {
+    store.addCallEvent(guildId, left, userId, "leave");
+    store.addCallEvent(guildId, joined, userId, "join");
   }
 }
 

@@ -440,6 +440,13 @@ const SPECS = {
     syntax: "voicehistory (user)",
     example: "voicehistory kutt"
   },
+  vchistory: {
+    name: "vchistory",
+    description: "Show who is in a voice channel and when people joined or left.",
+    syntax: "vchistory (channel)",
+    example: "vchistory #call",
+    permission: "Founder+"
+  },
   unrank: {
     name: "unrank",
     description: "Remove a member's voice rank.",

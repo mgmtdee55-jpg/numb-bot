@@ -83,6 +83,18 @@ CREATE TABLE IF NOT EXISTS voice_history (
 CREATE INDEX IF NOT EXISTS idx_voice_history_guild
   ON voice_history(guild_id, id);
 
+CREATE TABLE IF NOT EXISTS vc_call_history (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  guild_id TEXT NOT NULL,
+  channel_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  action TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_vc_call_history_channel
+  ON vc_call_history(guild_id, channel_id, id);
+
 CREATE TABLE IF NOT EXISTS lockdown_channels (
   guild_id TEXT NOT NULL,
   channel_id TEXT NOT NULL,
@@ -183,6 +195,19 @@ const statements = {
   addHistory: connection.prepare("INSERT INTO voice_history(guild_id, user_id, summary, created_at) VALUES(?,?,?,?)"),
   listHistory: connection.prepare("SELECT * FROM voice_history WHERE guild_id=? ORDER BY id DESC LIMIT ?"),
   listHistoryFor: connection.prepare("SELECT * FROM voice_history WHERE guild_id=? AND user_id=? ORDER BY id DESC LIMIT ?"),
+  addCallEvent: connection.prepare("INSERT INTO vc_call_history(guild_id, channel_id, user_id, action, created_at) VALUES(?,?,?,?,?)"),
+  callHistoryExists: connection.prepare("SELECT 1 AS present FROM vc_call_history LIMIT 1"),
+  savedVoiceHistory: connection.prepare("SELECT guild_id, user_id, summary, created_at FROM voice_history ORDER BY id ASC"),
+  listCallHistory: connection.prepare(`
+    SELECT * FROM (
+      SELECT * FROM vc_call_history WHERE guild_id=? AND channel_id=? ORDER BY id DESC LIMIT ?
+    ) ORDER BY id ASC
+  `),
+  trimCallHistory: connection.prepare(`
+    DELETE FROM vc_call_history WHERE guild_id=? AND channel_id=? AND id NOT IN (
+      SELECT id FROM vc_call_history WHERE guild_id=? AND channel_id=? ORDER BY id DESC LIMIT 400
+    )
+  `),
   trimHistory: connection.prepare(`
     DELETE FROM voice_history WHERE guild_id=? AND id NOT IN (
       SELECT id FROM voice_history WHERE guild_id=? ORDER BY id DESC LIMIT 50
@@ -345,6 +370,44 @@ module.exports = {
   listHistoryFor(guildId, userId, limit = 15) {
     return statements.listHistoryFor.all(key(guildId), key(userId), limit);
   },
+  addCallEvent(guildId, channelId, userId, action) {
+    const guild = key(guildId);
+    const channel = key(channelId);
+    statements.addCallEvent.run(guild, channel, key(userId), action, Date.now());
+    statements.trimCallHistory.run(guild, channel, guild, channel);
+  },
+  listCallHistory(guildId, channelId, limit = 400) {
+    return statements.listCallHistory.all(key(guildId), key(channelId), limit);
+  },
+  backfillCallHistory() {
+    if (statements.callHistoryExists.get()) return 0;
+    const rows = statements.savedVoiceHistory.all();
+    const insert = connection.transaction((entries) => {
+      let copied = 0;
+      for (const row of entries) {
+        const summary = String(row.summary || "");
+        const joined = summary.match(/^joined <#(\d{17,20})>$/);
+        if (joined) {
+          statements.addCallEvent.run(row.guild_id, joined[1], row.user_id, "join", row.created_at);
+          copied += 1;
+          continue;
+        }
+        const left = summary.match(/^left <#(\d{17,20})>$/);
+        if (left) {
+          statements.addCallEvent.run(row.guild_id, left[1], row.user_id, "leave", row.created_at);
+          copied += 1;
+          continue;
+        }
+        const moved = summary.match(/^moved <#(\d{17,20})> → <#(\d{17,20})>$/);
+        if (!moved) continue;
+        statements.addCallEvent.run(row.guild_id, moved[1], row.user_id, "leave", row.created_at);
+        statements.addCallEvent.run(row.guild_id, moved[2], row.user_id, "join", row.created_at);
+        copied += 1;
+      }
+      return copied;
+    });
+    return insert(rows);
+  },
   addLockdown(guildId, channelId, kind) {
     statements.addLockdown.run(key(guildId), key(channelId), kind);
   },
@@ -423,3 +486,5 @@ module.exports = {
     return statements.listCommandGrantsForUser.all(key(guildId), key(userId));
   }
 };
+
+module.exports.backfillCallHistory();

@@ -182,7 +182,7 @@ function ranksText() {
     "`-voiceshield @user` — Gods and the server owner can grant the same protection",
     "**Voice Premium** — follow, chain, unfollow, bring, forceclaim, inspect",
     "**Voice Plus** — inspect",
-    "**Gods and Founders** — forceownership, dragall, voicehistory, godmode, shield",
+    "**Gods and Founders** — forceownership, dragall, voicehistory, vchistory, godmode, shield",
     "",
     "`-vc rank` — list ranked members",
     "`-vc rank assign @user <rank>` — assign a rank",

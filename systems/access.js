@@ -25,7 +25,7 @@ const LADDER = [
 ];
 
 const FOUNDER_COMMANDS = new Set([
-  "forceownership", "dragall", "voicehistory", "godmode", "ungodmode", "shield", "unshield"
+  "forceownership", "dragall", "voicehistory", "vchistory", "godmode", "ungodmode", "shield", "unshield"
 ]);
 
 const GOD_COMMANDS = new Set(["muteall", "unmuteall"]);
@@ -62,6 +62,7 @@ const REQUIREMENT = {
   forceownership: "Gods and Founders",
   dragall: "Gods and Founders",
   voicehistory: "Gods and Founders",
+  vchistory: "Gods and Founders",
   godmode: "Gods and Founders",
   ungodmode: "Gods and Founders",
   shield: "Gods and Founders",
@@ -367,7 +368,7 @@ function grantHelp(prefix = "-") {
     "Verified Sellers can grant a command only after a CEO or the server owner runs `-verifiedseller addgiver <command>`.",
     "",
     "**Gods and the server owner** — muteall, unmuteall",
-    "**Voice** — forceownership, dragall, voicehistory, godmode, ungodmode, shield, unshield, voiceoverride, stsu, follow, chain, unfollow, bring, forceclaim, inspect",
+    "**Voice** — forceownership, dragall, voicehistory, vchistory, godmode, ungodmode, shield, unshield, voiceoverride, stsu, follow, chain, unfollow, bring, forceclaim, inspect",
     "**Force** — forcemanage, forcenickname, unforcenickname, forcerolestrip, forcestrip, unforcerolestrip, rolestrip",
     "**Channels** — lock, unlock, hide, unhide, lockall, unlockall, nuke, lockdown, unlockdown, ghost, unghost"
   ].join("\n");
