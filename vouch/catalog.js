@@ -22,6 +22,7 @@ const WHO = {
   voiceshield: "Gods+",
   "vc permit": "Everyone", "vc claim": "Everyone · 30s", "vc transfer": "Everyone", "vc limit": "Everyone",
   "vc config": "Gods+", "voicemaster configuration": "Gods+", "vc edit": "Owner", mvc: "Everyone",
+  poolsetup: "Owner", stoppool: "Owner", cleanpools: "Owner", poolstatus: "Owner",
   "send interface": "Everyone", ghost: "Premium+", unghost: "Premium+", claim: "Everyone · 30s",
   "vc rank": "Everyone", "vc rank assign": "Verified Seller, CEOs, and the server owner", "vc unrank": "Gods+", "vc rankinfo": "Everyone",
   "voice plus": "Gods+", "voice premium": "Gods+", "vouch premium plus": "Gods+",
@@ -192,7 +193,11 @@ function rawCategories(prefix) {
       ["send interface", "restore a VC panel"],
       ["ghost", "hide your VC"],
       ["unghost", "show your VC"],
-      ["claim", "claim an empty VC"]
+      ["claim", "claim an empty VC"],
+      ["poolsetup", "create standby voice pools"],
+      ["stoppool", "stop making new pools"],
+      ["cleanpools", "delete empty unclaimed pools"],
+      ["poolstatus", "show pool counts"]
     ])],
     ["VC Ranks", block(prefix, [
       ["vc rank", "list ranked members"],
@@ -482,6 +487,12 @@ function newCommandsMessage(prefix = "-", member = null) {
   const p = prefix;
   const lines = [
     "What was just added.",
+    "",
+    "**Voice pools**",
+    `\`${p}poolsetup\` — standby voice channels`,
+    `\`${p}poolstatus\` — empty, claimed, and refill`,
+    `\`${p}stoppool\` — stop new pools`,
+    `\`${p}cleanpools\` — delete empty unclaimed pools`,
     "",
     "**Verified Seller**",
     `\`${p}verifiedseller @role\` — set the one seller role`,

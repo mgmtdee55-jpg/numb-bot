@@ -51,6 +51,7 @@ async function handleCommand(message, client, prefix = "-", options = {}) {
     }
   }
   if (await systems.handleCommand(message, args, prefix)) return;
+  if (await require("./pool").handleCommand(message, args, prefix)) return;
   const command = args[0].toLowerCase();
   const vcCommand = `${prefix}vc`.toLowerCase();
 
@@ -180,6 +181,10 @@ async function handleCommand(message, client, prefix = "-", options = {}) {
             "VoiceMaster",
             [
               "`-vc setup` · Open the setup wizard",
+              "`-poolsetup` · Standby voice pools",
+              "`-poolstatus` · Pool counts",
+              "`-stoppool` · Stop new pools",
+              "`-cleanpools` · Delete empty unclaimed pools",
               "`-vc lock|unlock|ghost|unghost` · Manage your channel",
               "`-vc kick @user` · Remove someone from your channel",
               "`-vc ban|reject @user` · Block joining without hiding the channel",

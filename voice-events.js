@@ -24,6 +24,8 @@ const JOIN_PACE = {
 };
 const MAX_RETRY_MS = 15 * 60 * 1000;
 const FAILURE_RETRY_MS = [2000, 4000, 8000, 15000];
+const MAX_JOIN_ATTEMPTS = 6;
+const GIVE_UP_MS = 15000;
 
 function retryDelayMs(error) {
   if (!isRateLimitError(error)) return 0;
@@ -185,6 +187,7 @@ function createVoiceStateHandler({
     ...paceOverrides
   };
   const pendingCreates = new Map();
+  const giveUpUntil = new Map();
   const pacer = createGuildPacer(pace);
 
   function voiceStateFor(guild, userId) {
@@ -455,6 +458,33 @@ function createVoiceStateHandler({
           if (box.channel) await cleanupCreated(guild, box.channel.id);
           return null;
         }
+        const poolWorthy = error?.code === "J2C_TIMEOUT" || (!isRateLimitError(error) && streak >= 1) || streak >= 2;
+        if (poolWorthy && !box.poolTried) {
+          box.poolTried = true;
+          try {
+            const pooled = await require("./pool").moveFromLobby(guild, box.member, config.j2c_channel_id);
+            box.poolReason = pooled?.reason || (pooled?.channel ? "moved" : "unavailable");
+            if (pooled?.channel) {
+              if (box.channel && !sameId(box.channel.id, pooled.channel.id)) {
+                await cleanupCreated(guild, box.channel.id);
+              }
+              return { temp: pooled.channel, ownerId: box.member.id };
+            }
+          } catch (poolError) {
+            box.poolReason = "pool fallback failed";
+            logThrottledError(`j2c-pool:${guild.id}`, `[J2C pool] ${guild.id}:${userId}`, poolError);
+          }
+        }
+        if (streak >= MAX_JOIN_ATTEMPTS) {
+          giveUpUntil.set(`${guild.id}:${userId}`, Date.now() + GIVE_UP_MS);
+          logThrottledError(
+            `j2c-giveup:${guild.id}`,
+            `[J2C] ${guild.id}:${userId} stayed in the lobby after ${streak} attempts. Pool: ${box.poolReason || "not tried"}`,
+            error
+          );
+          if (box.channel) await cleanupCreated(guild, box.channel.id);
+          return null;
+        }
         await pace.sleep(failureDelayMs(error, streak));
       }
     }
@@ -462,6 +492,7 @@ function createVoiceStateHandler({
 
   function startJoin(guild, config, userId, fallbackMember, fromChannelId) {
     const key = `${guild.id}:${userId}`;
+    if ((giveUpUntil.get(key) || 0) > Date.now()) return Promise.resolve(null);
     const existing = pendingCreates.get(key);
     if (existing) return existing;
     const creation = stayUntilMoved(guild, config, userId, fallbackMember, fromChannelId).catch((error) => {
@@ -515,14 +546,21 @@ function createVoiceStateHandler({
       const joinedJoinToCreate =
         sameId(newState.channelId, config.j2c_channel_id) &&
         !sameId(oldState.channelId, newState.channelId);
+      const joinedMember = newState.member || guild.members?.cache?.get?.(newState.id);
       const joinTask = joinedJoinToCreate && !newState.member?.user?.bot
         ? startJoin(
           guild,
           config,
           newState.id,
-          newState.member || guild.members?.cache?.get?.(newState.id),
+          joinedMember,
           oldState.channelId
         )
+        : null;
+      const poolTask = !joinTask && newState.channelId && !sameId(oldState.channelId, newState.channelId) && !joinedMember?.user?.bot
+        ? require("./pool").claimJoin(guild, joinedMember, newState.channelId, oldState.channelId).catch((error) => {
+          logThrottledError(`pool-join:${guild.id}`, `[pool join] ${guild.id}:${newState.channelId}`, error);
+          return null;
+        })
         : null;
 
       if (oldState.channelId && oldState.channelId !== newState.channelId) {
@@ -558,6 +596,7 @@ function createVoiceStateHandler({
         }
       }
 
+      if (poolTask) await poolTask;
       if (joinTask) await joinTask;
     } catch (error) {
       logThrottledError(

@@ -37,6 +37,7 @@ const BUILTIN_COMMANDS = new Set([
   "setrole", "forcemanage", "forcenickname",
   "unforcenickname", "forcerolestrip", "forcestrip", "unforcerolestrip", "unforcestrip",
   "rolestrip", "vc", "mvc", "send", "lock", "unlock", "ghost", "unghost", "claim",
+  "poolsetup", "stoppool", "cleanpools", "poolstatus",
   "kick", "permit", "ban", "banned", "hardban", "softban", "tempban", "unban",
   "unbanall", "fb", "foreverban", "fub", "foreverunban", "pban", "personalban", "role", "fp", "fakepermissions",
   "rank", "ranks", "god", "m", "management", "mgmt", "managegod", "logging", "logs",

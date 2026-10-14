@@ -755,6 +755,7 @@ async function cleanupTempChannelUnlocked(guild, row, config = db.getConfig(guil
     }
     if (!channel || channel.type !== ChannelType.GuildVoice) {
       db.markTempDeleted(row.channel_id);
+      require("./pool").forgetChannel(row.channel_id);
       return;
     }
     if (channelHasOccupant(channel)) {
@@ -771,6 +772,7 @@ async function cleanupTempChannelUnlocked(guild, row, config = db.getConfig(guil
 
     await channel.delete("VoiceMaster: empty temporary channel cleanup");
     db.markTempDeleted(row.channel_id);
+    require("./pool").forgetChannel(row.channel_id);
     return true;
   } catch (error) {
     logThrottledError(`temp-cleanup:${guild.id}`, `[temp cleanup] ${row.channel_id}`, error);
@@ -884,6 +886,7 @@ module.exports = {
   releaseChannelForMove,
   clampBitrate,
   clampUserLimit,
+  renderName,
   isChannelMember,
   scheduleOwnerRelease,
   cancelOwnerRelease,

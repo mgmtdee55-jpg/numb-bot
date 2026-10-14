@@ -811,6 +811,34 @@ const SPECS = {
     example: "antinukewhitelist add @user",
     permission: "Server owner and anti-nuke administrators"
   },
+  poolsetup: {
+    name: "poolsetup",
+    description: "Open the wizard that creates standby voice channels.",
+    syntax: "poolsetup",
+    example: "poolsetup",
+    permission: "Server owner"
+  },
+  stoppool: {
+    name: "stoppool",
+    description: "Stop creating new pool channels. Existing calls stay.",
+    syntax: "stoppool",
+    example: "stoppool",
+    permission: "Server owner"
+  },
+  cleanpools: {
+    name: "cleanpools",
+    description: "Delete empty unclaimed pool channels the bot tracks.",
+    syntax: "cleanpools",
+    example: "cleanpools",
+    permission: "Server owner"
+  },
+  poolstatus: {
+    name: "poolstatus",
+    description: "Show empty pools, claimed calls, and whether refill is running.",
+    syntax: "poolstatus",
+    example: "poolstatus",
+    permission: "Server owner"
+  },
   newcommands: {
     name: "newcommands",
     description: "Show the commands that were just added, in a few words.",

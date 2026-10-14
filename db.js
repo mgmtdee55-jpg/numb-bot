@@ -151,6 +151,29 @@ CREATE TABLE IF NOT EXISTS personal_bans (
   username TEXT,
   PRIMARY KEY (guild_id, user_id)
 );
+
+CREATE TABLE IF NOT EXISTS pool_config (
+  guild_id TEXT PRIMARY KEY,
+  category_id TEXT NOT NULL,
+  name_template TEXT NOT NULL,
+  initial_count INTEGER NOT NULL,
+  refill_after INTEGER NOT NULL,
+  refill_batch INTEGER NOT NULL,
+  max_empty INTEGER NOT NULL,
+  cleanup_seconds INTEGER NOT NULL DEFAULT 0,
+  generation_stopped INTEGER NOT NULL DEFAULT 0,
+  cycle_claims INTEGER NOT NULL DEFAULT 0,
+  refill_open INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS pool_channels (
+  channel_id TEXT PRIMARY KEY,
+  guild_id TEXT NOT NULL,
+  status TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  claimed_at INTEGER,
+  owner_id TEXT
+);
 `);
 
 const saveConfigStatement = db.prepare(`
@@ -463,6 +486,91 @@ module.exports = {
     return db.prepare(`
       SELECT * FROM ban_history WHERE guild_id=? ORDER BY created_at DESC LIMIT ?
     `).all(guildId, limit);
+  },
+  getPoolConfig(guildId) {
+    return db.prepare("SELECT * FROM pool_config WHERE guild_id=?").get(guildId) || null;
+  },
+  savePoolConfig(row) {
+    db.prepare(`
+      INSERT INTO pool_config(
+        guild_id, category_id, name_template, initial_count, refill_after,
+        refill_batch, max_empty, cleanup_seconds, generation_stopped, cycle_claims, refill_open
+      ) VALUES (
+        @guild_id, @category_id, @name_template, @initial_count, @refill_after,
+        @refill_batch, @max_empty, @cleanup_seconds, @generation_stopped, @cycle_claims, @refill_open
+      )
+      ON CONFLICT(guild_id) DO UPDATE SET
+        category_id=excluded.category_id,
+        name_template=excluded.name_template,
+        initial_count=excluded.initial_count,
+        refill_after=excluded.refill_after,
+        refill_batch=excluded.refill_batch,
+        max_empty=excluded.max_empty,
+        cleanup_seconds=excluded.cleanup_seconds,
+        generation_stopped=excluded.generation_stopped,
+        cycle_claims=excluded.cycle_claims,
+        refill_open=excluded.refill_open
+    `).run(row);
+  },
+  setPoolGeneration(guildId, stopped) {
+    db.prepare("UPDATE pool_config SET generation_stopped=? WHERE guild_id=?").run(stopped ? 1 : 0, guildId);
+  },
+  setPoolRefill(guildId, { cycleClaims, refillOpen }) {
+    db.prepare("UPDATE pool_config SET cycle_claims=?, refill_open=? WHERE guild_id=?").run(cycleClaims, refillOpen ? 1 : 0, guildId);
+  },
+  insertPoolChannel(row) {
+    db.prepare(`
+      INSERT INTO pool_channels(channel_id, guild_id, status, created_at, claimed_at, owner_id)
+      VALUES(@channel_id, @guild_id, @status, @created_at, NULL, NULL)
+    `).run(row);
+  },
+  getPoolChannel(channelId) {
+    return db.prepare("SELECT * FROM pool_channels WHERE channel_id=?").get(channelId) || null;
+  },
+  listPoolChannels(guildId, status = null) {
+    if (status) {
+      return db.prepare("SELECT * FROM pool_channels WHERE guild_id=? AND status=? ORDER BY created_at ASC").all(guildId, status);
+    }
+    return db.prepare("SELECT * FROM pool_channels WHERE guild_id=? ORDER BY created_at ASC").all(guildId);
+  },
+  countPoolChannels(guildId, status) {
+    return db.prepare("SELECT COUNT(*) AS total FROM pool_channels WHERE guild_id=? AND status=?").get(guildId, status).total;
+  },
+  deletePoolChannel(channelId) {
+    db.prepare("DELETE FROM pool_channels WHERE channel_id=?").run(channelId);
+  },
+  claimPoolChannel(channelId, userId) {
+    const run = db.transaction(() => {
+      const row = db.prepare("SELECT * FROM pool_channels WHERE channel_id=? AND status='empty'").get(channelId);
+      if (!row) return null;
+      const changed = db.prepare(`
+        UPDATE pool_channels
+        SET status='claimed', owner_id=?, claimed_at=?
+        WHERE channel_id=? AND status='empty'
+      `).run(userId, Date.now(), channelId);
+      if (!changed.changes) return null;
+      db.prepare("UPDATE pool_config SET cycle_claims = cycle_claims + 1 WHERE guild_id=?").run(row.guild_id);
+      return db.prepare("SELECT * FROM pool_channels WHERE channel_id=?").get(channelId);
+    });
+    return run();
+  },
+  releasePoolClaim(channelId, userId) {
+    const run = db.transaction(() => {
+      const row = db.prepare("SELECT * FROM pool_channels WHERE channel_id=? AND status='claimed' AND owner_id=?").get(channelId, userId);
+      if (!row) return false;
+      db.prepare(`
+        UPDATE pool_channels
+        SET status='empty', owner_id=NULL, claimed_at=NULL
+        WHERE channel_id=? AND status='claimed' AND owner_id=?
+      `).run(channelId, userId);
+      db.prepare(`
+        UPDATE pool_config
+        SET cycle_claims = CASE WHEN cycle_claims > 0 THEN cycle_claims - 1 ELSE 0 END
+        WHERE guild_id=?
+      `).run(row.guild_id);
+      return true;
+    });
+    return run();
   },
   close() {
     db.close();

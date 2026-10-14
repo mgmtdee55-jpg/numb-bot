@@ -67,6 +67,7 @@ client.once("clientReady", async () => {
     for (const guild of client.guilds.cache.values()) {
       try {
         await reconcileGuild(guild);
+        await require("./pool").reconcileGuild(guild);
         await cleanupEmptyTempChannels(guild);
         handleVoiceState.recoverGuild(guild).catch((error) => {
           logThrottledError(`j2c-recover:${guild.id}`, `[J2C recover] ${guild.id}`, error);
@@ -270,6 +271,7 @@ client.on("interactionCreate", async (interaction) => {
   try {
     await emojisLoaded();
     if (await handleSetupInteraction(interaction)) return;
+    if (await require("./pool").handleInteraction(interaction)) return;
     if (await extras.handleInteraction(interaction)) return;
     if (await systems.handleInteraction(interaction)) return;
     if (interaction.isStringSelectMenu?.() && await vouch.handleInteraction(interaction)) return;
