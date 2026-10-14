@@ -2169,6 +2169,41 @@ test("a hung channel create cannot leave the next person sitting in join-to-crea
   assert.ok(creates.filter((id) => id === first.id).length >= 2);
 });
 
+test("join to create moves from the voice state when the member lookup never returns", async () => {
+  const guild = makeGuild("j2c-fetch-hang");
+  const member = makeMember(guild, "464646464646464641", { channelId: "j2c" });
+  guild.members.cache.delete(member.id);
+  let fetchStarted = false;
+  guild.members.fetch = () => {
+    fetchStarted = true;
+    return new Promise(() => {});
+  };
+  const state = {
+    guild,
+    id: member.id,
+    channelId: "j2c",
+    member: null,
+    async setChannel(channelId) {
+      state.channelId = channelId;
+      member.voice.channelId = channelId;
+    }
+  };
+  guild.voiceStates.cache.set(member.id, state);
+  const handler = createVoiceStateHandler({
+    db: {
+      getConfig: () => ({ j2c_channel_id: "j2c", category_id: "category" }),
+      getTempChannel: () => null
+    },
+    createTempChannel: async () => ({ id: "temp-without-fetch" }),
+    renderVoiceChannelInterface: async () => {},
+    cleanupEmptyTempChannels: async () => {}
+  });
+
+  await handler({ channelId: null }, state);
+  assert.equal(fetchStarted, false);
+  assert.equal(state.channelId, "temp-without-fetch");
+});
+
 test("someone already in the lobby is picked up without a new join event", async () => {
   const guild = makeGuild("j2c-nudge-guild");
   const member = makeMember(guild, "444444444444444441", { channelId: "j2c" });
@@ -2331,7 +2366,7 @@ test("a real voice join creates and moves when Discord did not cache the member"
   assert.equal(guild.members.cache.has(userId), false);
   await run;
 
-  assert.equal(fetches, 1);
+  assert.equal(fetches, 0);
   assert.equal(posts.length, 1);
   assert.equal(posts[0].parent_id, categoryId);
   assert.equal(moves.length, 1);

@@ -24,8 +24,6 @@ const JOIN_PACE = {
 };
 const MAX_RETRY_MS = 15 * 60 * 1000;
 const FAILURE_RETRY_MS = [2000, 4000, 8000, 15000];
-const MAX_JOIN_ATTEMPTS = 6;
-const GIVE_UP_MS = 15000;
 
 function retryDelayMs(error) {
   if (!isRateLimitError(error)) return 0;
@@ -187,7 +185,6 @@ function createVoiceStateHandler({
     ...paceOverrides
   };
   const pendingCreates = new Map();
-  const giveUpUntil = new Map();
   const pacer = createGuildPacer(pace);
 
   function voiceStateFor(guild, userId) {
@@ -231,7 +228,7 @@ function createVoiceStateHandler({
     if (stillInJoin(guild, userId, channelId, box)) return false;
     if (typeof guild?.voiceStates?.fetch !== "function") return true;
     try {
-      const state = await guild.voiceStates.fetch(userId);
+      const state = await withTimeout(guild.voiceStates.fetch(userId), 4000);
       const current = state?.channelId || state?.channel?.id || null;
       if (sameId(current, channelId)) {
         if (box) {
@@ -242,6 +239,7 @@ function createVoiceStateHandler({
       }
       return true;
     } catch (error) {
+      if (error?.code === "J2C_TIMEOUT") return false;
       if (error?.code === 10065 || error?.status === 404) return true;
       return false;
     }
@@ -258,21 +256,20 @@ function createVoiceStateHandler({
     };
   }
 
-  async function memberForJoin(guild, userId, fallback) {
+  async function memberForJoin(guild, userId, fallback, voiceState) {
     const cached = guild.members?.cache?.get?.(userId) || guild.members?.cache?.get?.(String(userId));
     if (canMove(cached)) return cached;
     if (canMove(fallback)) return fallback;
+    const state = typeof voiceState?.setChannel === "function" ? voiceState : voiceStateFor(guild, userId);
+    if (typeof state?.setChannel === "function") return personForChannel(guild, userId, fallback);
     if (typeof guild.members?.fetch !== "function") return null;
     try {
-      return await guild.members.fetch(userId);
+      return await withTimeout(guild.members.fetch(userId), 4000);
     } catch (error) {
-      if (error?.code === 10007) return null;
+      if (error?.code === "J2C_TIMEOUT" || error?.code === 10007) return null;
       if (!isRateLimitError(error)) return null;
-      await pace.sleep(pacer.penalize(guild.id, error));
-      return guild.members.fetch(userId).catch((retryError) => {
-        if (retryError?.code === 10007 || !isRateLimitError(retryError)) return null;
-        throw retryError;
-      });
+      await pace.sleep(Math.min(pacer.penalize(guild.id, error), 4000));
+      return withTimeout(guild.members.fetch(userId), 4000).catch(() => null);
     }
   }
 
@@ -378,7 +375,7 @@ function createVoiceStateHandler({
         }
         await pacer.acquire(guild.id, "move");
         if (!stillInJoin(guild, userId, config.j2c_channel_id, box)) throw leftJoinChannel();
-        const mover = voiceStateFor(guild, userId);
+        const mover = typeof box.voiceState?.setChannel === "function" ? box.voiceState : voiceStateFor(guild, userId);
         const reason = "VoiceMaster: created temporary voice channel";
         const moving = typeof mover?.setChannel === "function"
           ? mover.setChannel(box.channel.id, reason)
@@ -397,17 +394,12 @@ function createVoiceStateHandler({
     });
   }
 
-  async function stayUntilMoved(guild, config, userId, fallbackMember, fromChannelId) {
-    const box = {
-      channel: null,
-      member: fallbackMember,
-      fromChannelId: fromChannelId || null,
-      expectJoin: Date.now() + 3000
-    };
+  async function stayUntilMoved(guild, config, userId, box) {
     let streak = 0;
     while (true) {
       try {
-        const member = await memberForJoin(guild, userId, box.member);
+        if (!box.voiceState) box.voiceState = voiceStateFor(guild, userId);
+        const member = await memberForJoin(guild, userId, box.member, box.voiceState);
         if (member?.user?.bot) {
           if (box.channel) await cleanupCreated(guild, box.channel.id);
           return null;
@@ -423,6 +415,18 @@ function createVoiceStateHandler({
         if (await leftJoin(guild, userId, config.j2c_channel_id, box)) {
           if (box.channel) await cleanupCreated(guild, box.channel.id);
           return null;
+        }
+        if (!box.poolTried) {
+          box.poolTried = true;
+          try {
+            const pooled = await withTimeout(
+              require("./pool").moveFromLobby(guild, actor, config.j2c_channel_id, box.voiceState),
+              8000
+            );
+            if (pooled?.channel) return { temp: pooled.channel, ownerId: actor.id };
+          } catch (poolError) {
+            logThrottledError(`j2c-pool:${guild.id}`, `[J2C pool] ${guild.id}:${userId}`, poolError);
+          }
         }
         const channel = await withChannelLock(`j2c-user:${guild.id}:${userId}`, () => openCall(guild, config, userId, box));
         if (!channel) {
@@ -458,52 +462,32 @@ function createVoiceStateHandler({
           if (box.channel) await cleanupCreated(guild, box.channel.id);
           return null;
         }
-        const poolWorthy = error?.code === "J2C_TIMEOUT" || (!isRateLimitError(error) && streak >= 1) || streak >= 2;
-        if (poolWorthy && !box.poolTried) {
-          box.poolTried = true;
-          try {
-            const pooled = await require("./pool").moveFromLobby(guild, box.member, config.j2c_channel_id);
-            box.poolReason = pooled?.reason || (pooled?.channel ? "moved" : "unavailable");
-            if (pooled?.channel) {
-              if (box.channel && !sameId(box.channel.id, pooled.channel.id)) {
-                await cleanupCreated(guild, box.channel.id);
-              }
-              return { temp: pooled.channel, ownerId: box.member.id };
-            }
-          } catch (poolError) {
-            box.poolReason = "pool fallback failed";
-            logThrottledError(`j2c-pool:${guild.id}`, `[J2C pool] ${guild.id}:${userId}`, poolError);
-          }
-        }
-        if (streak >= MAX_JOIN_ATTEMPTS) {
-          giveUpUntil.set(`${guild.id}:${userId}`, Date.now() + GIVE_UP_MS);
-          logThrottledError(
-            `j2c-giveup:${guild.id}`,
-            `[J2C] ${guild.id}:${userId} stayed in the lobby after ${streak} attempts. Pool: ${box.poolReason || "not tried"}`,
-            error
-          );
-          if (box.channel) await cleanupCreated(guild, box.channel.id);
-          return null;
-        }
         await pace.sleep(failureDelayMs(error, streak));
       }
     }
   }
 
-  function startJoin(guild, config, userId, fallbackMember, fromChannelId) {
+  function startJoin(guild, config, userId, fallbackMember, fromChannelId, voiceState) {
     const key = `${guild.id}:${userId}`;
-    if ((giveUpUntil.get(key) || 0) > Date.now()) return Promise.resolve(null);
     const existing = pendingCreates.get(key);
-    if (existing) return existing;
-    const creation = stayUntilMoved(guild, config, userId, fallbackMember, fromChannelId).catch((error) => {
+    if (existing) return existing.promise;
+    const box = {
+      channel: null,
+      member: fallbackMember,
+      fromChannelId: fromChannelId || null,
+      expectJoin: Date.now() + 3000,
+      voiceState: voiceState || null
+    };
+    const promise = stayUntilMoved(guild, config, userId, box).catch((error) => {
       logThrottledError(`j2c-create:${guild.id}`, `[J2C create] ${guild.id}:${userId}`, error);
       return null;
     });
-    pendingCreates.set(key, creation);
-    creation.finally(() => {
-      if (pendingCreates.get(key) === creation) pendingCreates.delete(key);
+    const record = { promise, box, startedAt: Date.now() };
+    pendingCreates.set(key, record);
+    promise.finally(() => {
+      if (pendingCreates.get(key) === record) pendingCreates.delete(key);
     });
-    return creation;
+    return promise;
   }
 
   function nudgeGuild(guild) {
@@ -547,13 +531,15 @@ function createVoiceStateHandler({
         sameId(newState.channelId, config.j2c_channel_id) &&
         !sameId(oldState.channelId, newState.channelId);
       const joinedMember = newState.member || guild.members?.cache?.get?.(newState.id);
-      const joinTask = joinedJoinToCreate && !newState.member?.user?.bot
+      const knownUser = guild.client?.users?.cache?.get?.(newState.id);
+      const joinTask = joinedJoinToCreate && !newState.member?.user?.bot && !knownUser?.bot
         ? startJoin(
           guild,
           config,
           newState.id,
           joinedMember,
-          oldState.channelId
+          oldState.channelId,
+          newState
         )
         : null;
       const poolTask = !joinTask && newState.channelId && !sameId(oldState.channelId, newState.channelId) && !joinedMember?.user?.bot

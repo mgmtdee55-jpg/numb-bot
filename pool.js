@@ -99,9 +99,17 @@ function lane(guildId) {
   return state;
 }
 
-function isOwner(memberOrUserId, guild) {
-  const userId = typeof memberOrUserId === "string" ? memberOrUserId : memberOrUserId?.id || memberOrUserId?.author?.id;
-  return !!guild && String(userId) === String(guild.ownerId);
+function canConfigure(userId, guild, member) {
+  if (!userId || !guild) return false;
+  if (guild.ownerId && String(userId) === String(guild.ownerId)) return true;
+  if (require("./systems/access").isBotOwner(userId)) return true;
+  if (member && require("./systems/access").staffTier(member) === "god") return true;
+  try {
+    if (member?.permissions?.has?.(PermissionFlagsBits.Administrator)) return true;
+  } catch {
+    return false;
+  }
+  return false;
 }
 
 function occupantCount(channel) {
@@ -270,7 +278,7 @@ function destroySession(wizard) {
 }
 
 function sessionIsStale(wizard) {
-  return !wizard || !wizard.message || !wizard.expiresAt || wizard.expiresAt <= Date.now();
+  return !wizard || !wizard.expiresAt || wizard.expiresAt <= Date.now();
 }
 
 function saveSession(wizard) {
@@ -319,7 +327,7 @@ function nameModal(userId, current) {
 }
 
 async function start(message) {
-  if (!isOwner(message.author.id, message.guild)) {
+  if (!canConfigure(message.author.id, message.guild, message.member)) {
     return message.reply({ embeds: [embed("Owner Only", "Only the server owner can use `-poolsetup`.")] });
   }
   const existing = sessions.get(sessionKey(message.guild.id));
@@ -428,32 +436,72 @@ async function saveWizard(interaction, wizard) {
   }
 }
 
-function currentWizard(interaction, userId) {
-  const wizard = sessions.get(sessionKey(interaction.guildId));
-  if (!wizard || wizard.userId !== userId || !isOwner(interaction.user.id, interaction.guild)) return { wizard: null, missing: true };
-  if (sessionIsStale(wizard)) {
-    destroySession(wizard);
-    return { wizard: null, stale: true };
-  }
-  if (interaction.message?.id && wizard.message?.id && interaction.message.id !== wizard.message.id) {
-    return { wizard: null, staleView: true };
-  }
-  return { wizard };
+function wizardFromInteraction(interaction, userId) {
+  return {
+    guild: interaction.guild,
+    userId,
+    values: freshValues(interaction.guild),
+    step: 0,
+    saving: false,
+    message: interaction.message || null,
+    timeout: null,
+    expiresAt: 0
+  };
 }
 
-async function rejectWizard(interaction, state) {
-  const text = state.stale || state.staleView
-    ? "This pool setup expired. Run `-poolsetup` to start again."
-    : "Only the server owner can use the pool setup wizard.";
-  if (interaction.replied || interaction.deferred) return;
-  await interaction.reply({ embeds: [embed(state.missing && !state.stale ? "Owner Only" : "Pool Setup Expired", text)], flags: MessageFlags.Ephemeral });
+function liveWizard(interaction, userId) {
+  const key = sessionKey(interaction.guildId || interaction.guild?.id);
+  let wizard = sessions.get(key);
+  if (wizard && (sessionIsStale(wizard) || String(wizard.userId) !== String(userId))) {
+    destroySession(wizard);
+    wizard = null;
+  }
+  if (!wizard) wizard = wizardFromInteraction(interaction, userId);
+  if (interaction.message) wizard.message = interaction.message;
+  wizard.guild = interaction.guild || wizard.guild;
+  saveSession(wizard);
+  return wizard;
+}
+
+async function showWizard(interaction, wizard) {
+  saveSession(wizard);
+  const payload = wizardPayload(wizard);
+  try {
+    if (interaction.deferred) {
+      await interaction.editReply(payload);
+      return;
+    }
+    if (typeof interaction.update === "function" && interaction.message) {
+      await interaction.update(payload);
+      return;
+    }
+  } catch (error) {
+    logThrottledError(`pool-setup:${wizard.guild?.id}`, `[pool setup] ${wizard.guild?.id}`, error);
+  }
+  if (interaction.replied || interaction.deferred) {
+    await interaction.followUp({ ...payload, flags: MessageFlags.Ephemeral }).catch(() => null);
+    return;
+  }
+  await interaction.reply({ ...payload, flags: MessageFlags.Ephemeral }).catch(() => null);
 }
 
 async function handleInteraction(interaction) {
+  try {
+    return await handlePoolInteraction(interaction);
+  } catch (error) {
+    logThrottledError(`pool-setup:${interaction.guild?.id}`, `[pool setup] ${interaction.guild?.id}`, error);
+    const payload = { embeds: [embed("Pool Setup", "That setup step did not save. Use Next again, or run `-poolsetup` to reopen it.")], flags: MessageFlags.Ephemeral };
+    if (interaction.replied || interaction.deferred) await interaction.followUp(payload).catch(() => null);
+    else await interaction.reply(payload).catch(() => null);
+    return true;
+  }
+}
+
+async function handlePoolInteraction(interaction) {
   const customId = interaction.customId || "";
   if (customId.startsWith("pool-open:")) {
     const expected = customId.split(":")[1];
-    if (expected !== interaction.user.id || !isOwner(interaction.user.id, interaction.guild)) {
+    if (expected !== interaction.user.id || !canConfigure(interaction.user.id, interaction.guild, interaction.member)) {
       await interaction.reply({ embeds: [embed("Owner Only", "Only the server owner can use `-poolsetup`.")], flags: MessageFlags.Ephemeral });
       return true;
     }
@@ -463,47 +511,39 @@ async function handleInteraction(interaction) {
       return true;
     }
     if (current && sessionIsStale(current)) destroySession(current);
-    const wizard = current && !sessionIsStale(current) ? current : {
-      guild: interaction.guild,
-      userId: interaction.user.id,
-      values: freshValues(interaction.guild),
-      step: 0,
-      saving: false,
-      message: null,
-      timeout: null,
-      expiresAt: 0
-    };
-    await interaction.reply({ ...wizardPayload(wizard), flags: MessageFlags.Ephemeral });
-    wizard.message = await interaction.fetchReply();
+    const wizard = current && !sessionIsStale(current) ? current : wizardFromInteraction(interaction, interaction.user.id);
     wizard.guild = interaction.guild;
+    saveSession(wizard);
+    const sent = await interaction.reply({ ...wizardPayload(wizard), flags: MessageFlags.Ephemeral, fetchReply: true });
+    wizard.message = sent || wizard.message;
     saveSession(wizard);
     return true;
   }
   if (customId.startsWith("pool-name:")) {
     const userId = customId.split(":")[1];
-    const state = currentWizard(interaction, userId);
-    if (!state.wizard) {
-      await rejectWizard(interaction, state);
+    if (userId !== interaction.user.id || !canConfigure(interaction.user.id, interaction.guild, interaction.member)) {
+      await interaction.reply({ embeds: [embed("Owner Only", "Only the server owner can use the pool setup wizard.")], flags: MessageFlags.Ephemeral });
       return true;
     }
+    const wizard = liveWizard(interaction, userId);
     const name = interaction.fields.getTextInputValue("name").trim();
     if (!name || name.length > 100) {
       await interaction.reply({ embeds: [embed("Pool Setup Needs Attention", "Enter a name of 1 to 100 characters.")], flags: MessageFlags.Ephemeral });
       return true;
     }
-    state.wizard.values.name_template = name;
-    saveSession(state.wizard);
+    wizard.values.name_template = name;
+    saveSession(wizard);
     await interaction.reply({ embeds: [embed("Name Saved", `\`${name}\``)], flags: MessageFlags.Ephemeral });
-    await state.wizard.message.edit(wizardPayload(state.wizard));
+    await wizard.message?.edit?.(wizardPayload(wizard));
     return true;
   }
   if (customId.startsWith("pool-number:")) {
     const [, userId, field] = customId.split(":");
-    const state = currentWizard(interaction, userId);
-    if (!state.wizard) {
-      await rejectWizard(interaction, state);
+    if (userId !== interaction.user.id || !canConfigure(interaction.user.id, interaction.guild, interaction.member)) {
+      await interaction.reply({ embeds: [embed("Owner Only", "Only the server owner can use the pool setup wizard.")], flags: MessageFlags.Ephemeral });
       return true;
     }
+    const wizard = liveWizard(interaction, userId);
     const labels = {
       initial_count: ["The starting pool size", 1, 50],
       refill_after: ["The refill threshold", 1, 50],
@@ -517,34 +557,27 @@ async function handleInteraction(interaction) {
       await interaction.reply({ embeds: [embed("Pool Setup Needs Attention", parsed.error)], flags: MessageFlags.Ephemeral });
       return true;
     }
-    state.wizard.values[field] = parsed.value;
-    saveSession(state.wizard);
+    wizard.values[field] = parsed.value;
+    saveSession(wizard);
     await interaction.reply({ embeds: [embed("Number Saved", `**${parsed.value}**`)], flags: MessageFlags.Ephemeral });
-    await state.wizard.message.edit(wizardPayload(state.wizard));
+    await wizard.message?.edit?.(wizardPayload(wizard));
     return true;
   }
   if (!customId.startsWith("pool:")) return false;
   const [, userId, action] = customId.split(":");
-  if (!isOwner(interaction.user.id, interaction.guild) || userId !== interaction.user.id) {
+  if (userId !== interaction.user.id || !canConfigure(interaction.user.id, interaction.guild, interaction.member)) {
     await interaction.reply({ embeds: [embed("Owner Only", "Only the server owner can use the pool setup wizard.")], flags: MessageFlags.Ephemeral });
     return true;
   }
-  const state = currentWizard(interaction, userId);
-  if (!state.wizard) {
-    await rejectWizard(interaction, state);
-    return true;
-  }
-  const wizard = state.wizard;
+  const wizard = liveWizard(interaction, userId);
   if (action === "category" && interaction.isChannelSelectMenu?.()) {
     wizard.values.category_id = interaction.values[0];
-    saveSession(wizard);
-    await interaction.update(wizardPayload(wizard));
+    await showWizard(interaction, wizard);
     return true;
   }
   if (action === "cleanup" && interaction.isStringSelectMenu?.()) {
     wizard.values.cleanup_seconds = Number(interaction.values[0]);
-    saveSession(wizard);
-    await interaction.update(wizardPayload(wizard));
+    await showWizard(interaction, wizard);
     return true;
   }
   if (action === "edit-initial") {
@@ -574,8 +607,7 @@ async function handleInteraction(interaction) {
   }
   if (action === "back") {
     wizard.step = Math.max(0, wizard.step - 1);
-    saveSession(wizard);
-    await interaction.update(wizardPayload(wizard));
+    await showWizard(interaction, wizard);
     return true;
   }
   if (action === "next") {
@@ -589,8 +621,7 @@ async function handleInteraction(interaction) {
       return true;
     }
     wizard.step += 1;
-    saveSession(wizard);
-    await interaction.update(wizardPayload(wizard));
+    await showWizard(interaction, wizard);
     return true;
   }
   return true;
@@ -650,16 +681,37 @@ function rememberTemp(guild, channel, member) {
   if (typeof db.forceOwner === "function") db.forceOwner(channel.id, member.id);
 }
 
-function stillThere(member, channelId, moveFrom) {
-  const current = member?.voice?.channelId;
+function seenChannel(member, voiceState) {
+  const fromMember = member?.voice?.channelId || member?.voice?.channel?.id;
+  if (fromMember != null) return fromMember;
+  return voiceState?.channelId || voiceState?.channel?.id || null;
+}
+
+function stillThere(member, channelId, moveFrom, voiceState) {
+  const current = seenChannel(member, voiceState);
   if (current == null) return true;
   if (String(current) === String(channelId)) return true;
   if (moveFrom && String(current) === String(moveFrom)) return true;
   return false;
 }
 
-async function moveMember(guild, member, channelId) {
+function alreadyThere(member, channelId, voiceState) {
+  const current = seenChannel(member, voiceState);
+  return current != null && String(current) === String(channelId);
+}
+
+function landedIn(member, channelId, voiceState) {
+  const current = seenChannel(member, voiceState);
+  if (current == null) return true;
+  return String(current) === String(channelId);
+}
+
+async function moveMember(guild, member, channelId, voiceState) {
   const reason = "VoiceMaster: pool channel";
+  if (typeof voiceState?.setChannel === "function") {
+    await voiceState.setChannel(channelId, reason);
+    return;
+  }
   if (typeof member?.voice?.setChannel === "function") {
     await member.voice.setChannel(channelId, reason);
     return;
@@ -671,34 +723,38 @@ function leftDuringMove(error) {
   return Number(error?.code) === 40032 || Number(error?.code) === 10065;
 }
 
-async function claimFor(guild, member, channel, { moveFrom = null } = {}) {
+async function claimFor(guild, member, channel, { moveFrom = null, voiceState = null } = {}) {
   if (!member?.id || member.user?.bot) return null;
   return withChannelLock(`pool:${channel.id}`, async () => {
     const claimed = db.claimPoolChannel(channel.id, member.id);
     if (!claimed) return null;
-    if (!stillThere(member, channel.id, moveFrom)) {
+    if (!stillThere(member, channel.id, moveFrom, voiceState)) {
       db.releasePoolClaim(channel.id, member.id);
       return null;
     }
     try {
       await applySettings(guild, channel, member);
-      if (String(member.voice?.channelId || "") !== String(channel.id)) {
-        await moveMember(guild, member, channel.id);
+      if (!alreadyThere(member, channel.id, voiceState)) {
+        await moveMember(guild, member, channel.id, voiceState);
+      }
+      if (!landedIn(member, channel.id, voiceState)) {
+        if (occupantCount(channel) === 0) db.releasePoolClaim(channel.id, member.id);
+        return null;
       }
       rememberTemp(guild, channel, member);
       await showInterface(channel, member.id);
       scheduleRefill(guild);
       return channel;
     } catch (error) {
-      if (leftDuringMove(error) || !stillThere(member, channel.id, moveFrom)) {
-        if (occupantCount(channel) === 0) db.releasePoolClaim(channel.id, member.id);
-        return null;
+      if (landedIn(member, channel.id, voiceState) && !leftDuringMove(error)) {
+        logThrottledError(`pool-claim:${guild.id}`, `[pool claim] ${guild.id}:${channel.id}`, error);
+        if (!db.getTempChannel(channel.id)) rememberTemp(guild, channel, member);
+        await showInterface(channel, member.id);
+        scheduleRefill(guild);
+        return channel;
       }
-      logThrottledError(`pool-claim:${guild.id}`, `[pool claim] ${guild.id}:${channel.id}`, error);
-      if (!db.getTempChannel(channel.id)) rememberTemp(guild, channel, member);
-      await showInterface(channel, member.id);
-      scheduleRefill(guild);
-      return channel;
+      if (occupantCount(channel) === 0) db.releasePoolClaim(channel.id, member.id);
+      return null;
     }
   });
 }
@@ -711,10 +767,11 @@ async function claimJoin(guild, member, channelId) {
   return claimFor(guild, member, channel);
 }
 
-async function moveFromLobby(guild, member, lobbyId) {
+async function moveFromLobby(guild, member, lobbyId, voiceState) {
   const config = db.getPoolConfig(guild.id);
   if (!config) return { channel: null, reason: "pools are not set up" };
-  if (member?.voice?.channelId && lobbyId && String(member.voice.channelId) !== String(lobbyId)) {
+  const current = seenChannel(member, voiceState);
+  if (current && lobbyId && String(current) !== String(lobbyId)) {
     return { channel: null, reason: "member left join-to-create" };
   }
   const empties = db.listPoolChannels(guild.id, "empty");
@@ -722,15 +779,13 @@ async function moveFromLobby(guild, member, lobbyId) {
   for (const row of empties) {
     let channel = guild.channels?.cache?.get?.(row.channel_id) || null;
     if (!channel && typeof guild.channels?.fetch === "function") {
-      channel = await guild.channels.fetch(row.channel_id).catch((error) => {
-        if (error?.code === 10003) return null;
-        return null;
-      });
+      channel = await guild.channels.fetch(row.channel_id).catch(() => null);
     }
     if (!channel || occupantCount(channel) > 0) continue;
-    const claimed = await claimFor(guild, member, channel, { moveFrom: lobbyId });
+    const claimed = await claimFor(guild, member, channel, { moveFrom: lobbyId, voiceState });
     if (claimed) return { channel: claimed, reason: null };
-    if (member?.voice?.channelId && lobbyId && String(member.voice.channelId) !== String(lobbyId)) {
+    const after = seenChannel(member, voiceState);
+    if (after && lobbyId && String(after) !== String(lobbyId)) {
       return { channel: null, reason: "member left join-to-create" };
     }
   }
@@ -1077,7 +1132,7 @@ async function handleCommand(message, args, prefix) {
   const normalized = String(prefix || "-").toLowerCase();
   const command = name.startsWith(normalized) ? name.slice(prefix.length) : name;
   if (!["poolsetup", "stoppool", "cleanpools", "poolstatus"].includes(command)) return false;
-  if (!isOwner(message.author.id, message.guild)) {
+  if (!canConfigure(message.author.id, message.guild, message.member)) {
     await message.reply({ embeds: [embed("Owner Only", "Only the server owner can manage voice pools.")] });
     return true;
   }

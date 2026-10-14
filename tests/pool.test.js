@@ -268,7 +268,7 @@ test("two members cannot both become the initial owner of one pool", async () =>
   assert.ok(voice.interfaceCalls >= 1);
 });
 
-test("join to create falls back to one pool when creating a channel fails", async () => {
+test("join to create moves into a ready pool without waiting to create a channel", async () => {
   const guild = makeGuild("j2c-pool-fallback");
   const cat = category(guild);
   savePool(guild, cat, { refill_after: 50 });
@@ -299,14 +299,14 @@ test("join to create falls back to one pool when creating a channel fails", asyn
     { channelId: null },
     { guild, id: member.id, member, channelId: lobby.id }
   );
-  assert.equal(creates, 1);
+  assert.equal(creates, 0);
   assert.equal(member.voice.channelId, poolChannel.id);
   assert.equal(db.getTempChannel(poolChannel.id).owner_id, member.id);
   assert.equal(db.getPoolChannel(poolChannel.id).status, "claimed");
   assert.equal(cleaned.length, 0);
 });
 
-test("a failed move uses the pool and does not keep a second channel", async () => {
+test("a failed pool move releases the pool and still opens a new call", async () => {
   const guild = makeGuild("j2c-pool-move-fail");
   const cat = category(guild);
   savePool(guild, cat, { refill_after: 50 });
@@ -334,10 +334,11 @@ test("a failed move uses the pool and does not keep a second channel", async () 
     }
   });
   await handler({ channelId: null }, { guild, id: member.id, member, channelId: "j2c" });
-  assert.deepEqual(cleaned, ["orphan-temp"]);
-  assert.equal(member.voice.channelId, poolChannel.id);
-  assert.equal(db.getTempChannel("orphan-temp"), undefined);
-  assert.equal(db.getTempChannel(poolChannel.id).owner_id, member.id);
+  assert.deepEqual(cleaned, []);
+  assert.equal(member.voice.channelId, "orphan-temp");
+  assert.equal(db.getPoolChannel(poolChannel.id).status, "empty");
+  assert.equal(db.getTempChannel(poolChannel.id), undefined);
+  assert.equal(poolChannel.deleted, false);
 });
 
 test("leaving join-to-create before the fallback cancels the move", async () => {
@@ -347,15 +348,14 @@ test("leaving join-to-create before the fallback cancels the move", async () => 
   const poolChannel = makeVoice(guild, nextId(), { parent: cat.id });
   guild.channels.cache.set(poolChannel.id, poolChannel);
   db.insertPoolChannel({ channel_id: poolChannel.id, guild_id: guild.id, status: "empty", created_at: Date.now() });
-  const member = makeMember(guild, "j2c");
+  const member = makeMember(guild, "somewhere-else");
+  guild.voiceStates.cache.set(member.id, { id: member.id, channelId: "somewhere-else" });
   const handler = createVoiceStateHandler({
     db: {
       getConfig: () => ({ j2c_channel_id: "j2c", category_id: cat.id }),
       getTempChannel: () => null
     },
     createTempChannel: async () => {
-      member.voice.channelId = "somewhere-else";
-      guild.voiceStates.cache.set(member.id, { id: member.id, channelId: "somewhere-else" });
       throw new Error("create failed");
     },
     renderVoiceChannelInterface: async () => {},
@@ -584,4 +584,53 @@ test("a second pool setup cannot open while one is already in progress", async (
   const message = messageFor(guild);
   await pool.handleCommand(message, ["-poolsetup"], "-");
   assert.match(description(message.replies[0]), /already open/);
+});
+
+test("wizard buttons keep the owner in setup after the first screen fails to save", async () => {
+  const guild = makeGuild();
+  guild.ownerId = "owner-1";
+  const screen = { id: "wizard-screen", async edit() {} };
+  const next = {
+    customId: "pool:owner-1:next",
+    user: { id: "owner-1" },
+    guild,
+    guildId: guild.id,
+    message: screen,
+    async update(payload) {
+      next.payload = payload;
+    },
+    async reply(payload) {
+      next.replied = payload;
+    }
+  };
+  assert.equal(await pool.handleInteraction(next), true);
+  assert.equal(next.replied, undefined);
+  assert.match(next.payload.embeds[0].data.description, /Category/);
+});
+
+test("a failed screen update still shows the next setup step", async () => {
+  const guild = makeGuild();
+  guild.ownerId = "owner-1";
+  const next = {
+    customId: "pool:owner-1:next",
+    user: { id: "owner-1" },
+    guild,
+    guildId: guild.id,
+    message: { id: "wizard-screen" },
+    replied: false,
+    deferred: false,
+    async update() {
+      throw Object.assign(new Error("Invalid Form Body"), { code: 50035 });
+    },
+    async reply(payload) {
+      next.replied = true;
+      next.payload = payload;
+    },
+    async followUp(payload) {
+      next.payload = payload;
+    }
+  };
+  assert.equal(await pool.handleInteraction(next), true);
+  assert.match(next.payload.embeds[0].data.description, /Category/);
+  assert.doesNotMatch(next.payload.embeds[0].data.description, /Owner Only/);
 });
