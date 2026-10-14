@@ -19,7 +19,8 @@ const JOIN_PACE = {
   createWindowMs: 5000,
   moveLimit: 9,
   moveWindowMs: 10000,
-  maxAttempts: 4
+  maxAttempts: 4,
+  operationTimeoutMs: 12000
 };
 const MAX_RETRY_MS = 15 * 60 * 1000;
 const FAILURE_RETRY_MS = [2000, 4000, 8000, 15000];
@@ -35,11 +36,36 @@ function retryDelayMs(error) {
 }
 
 function failureDelayMs(error, streak) {
+  if (error?.code === "J2C_TIMEOUT") return 200;
   if (isRateLimitError(error)) return retryDelayMs(error);
   const permissionDenied = Number(error?.code) === 50013 || Number(error?.status) === 403;
   if (permissionDenied) return 30000;
   const index = Math.min(Math.max(streak, 1), FAILURE_RETRY_MS.length) - 1;
   return FAILURE_RETRY_MS[index];
+}
+
+function withTimeout(work, ms) {
+  let finished = false;
+  const pending = Promise.resolve(work);
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      finished = true;
+      const error = new Error("Join to create timed out");
+      error.code = "J2C_TIMEOUT";
+      reject(error);
+    }, ms);
+    timer.unref?.();
+    pending.then(
+      (value) => {
+        clearTimeout(timer);
+        if (!finished) resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        if (!finished) reject(error);
+      }
+    );
+  });
 }
 
 function leftVoice(error) {
@@ -127,13 +153,13 @@ function createGuildPacer(pace) {
     while (queue.active < pace.maxConcurrent && queue.waiting.length) {
       const task = queue.waiting.shift();
       queue.active += 1;
-      Promise.resolve()
-        .then(task.operation)
-        .then(task.resolve, task.reject)
-        .then(() => {
-          queue.active -= 1;
-          pump(guildId);
-        });
+    Promise.resolve()
+      .then(task.operation)
+      .then(task.resolve, task.reject)
+      .finally(() => {
+        queue.active -= 1;
+        pump(guildId);
+      });
     }
   }
 
@@ -165,13 +191,57 @@ function createVoiceStateHandler({
     return guild?.voiceStates?.cache?.get?.(userId) || guild?.voiceStates?.cache?.get?.(String(userId)) || null;
   }
 
-  function stillInJoin(guild, userId, channelId) {
+  function listedInChannel(guild, channelId, userId) {
+    const channel = guild?.channels?.cache?.get?.(channelId) || guild?.channels?.cache?.get?.(String(channelId));
+    const members = channel?.members;
+    if (!members) return false;
+    if (members.has?.(userId) || members.has?.(String(userId))) return true;
+    if (typeof members.values !== "function") return false;
+    for (const member of members.values()) {
+      if (sameId(member?.id, userId)) return true;
+    }
+    return false;
+  }
+
+  function voiceChannelId(guild, userId) {
     const state = voiceStateFor(guild, userId);
     const fromState = state?.channelId || state?.channel?.id || null;
-    if (fromState != null) return sameId(fromState, channelId);
+    if (fromState != null) return fromState;
     const member = guild?.members?.cache?.get?.(userId) || guild?.members?.cache?.get?.(String(userId));
-    const current = member?.voice?.channelId || member?.voice?.channel?.id || null;
-    return sameId(current, channelId);
+    return member?.voice?.channelId || member?.voice?.channel?.id || null;
+  }
+
+  function stillInJoin(guild, userId, channelId, box) {
+    if (listedInChannel(guild, channelId, userId)) return true;
+    const current = voiceChannelId(guild, userId);
+    if (current != null && sameId(current, channelId)) return true;
+    const fresh = box?.expectJoin && Date.now() < box.expectJoin;
+    if (!fresh) return false;
+    if (current == null) return true;
+    if (box.fetchedHere) return true;
+    // The cache can still show the channel they stepped out of for a moment
+    // after the join event. That is not proof they left the lobby.
+    return !!(box.fromChannelId && sameId(current, box.fromChannelId));
+  }
+
+  async function leftJoin(guild, userId, channelId, box) {
+    if (stillInJoin(guild, userId, channelId, box)) return false;
+    if (typeof guild?.voiceStates?.fetch !== "function") return true;
+    try {
+      const state = await guild.voiceStates.fetch(userId);
+      const current = state?.channelId || state?.channel?.id || null;
+      if (sameId(current, channelId)) {
+        if (box) {
+          box.expectJoin = Date.now() + 3000;
+          box.fetchedHere = true;
+        }
+        return false;
+      }
+      return true;
+    } catch (error) {
+      if (error?.code === 10065 || error?.status === 404) return true;
+      return false;
+    }
   }
 
   function personForChannel(guild, userId, fallback) {
@@ -236,10 +306,7 @@ function createVoiceStateHandler({
     }
     const channel = guild.channels?.cache?.get?.(channelId);
     if (typeof channel?.members?.values === "function") {
-      for (const member of channel.members.values()) {
-        if (member?.voice?.channelId && member.voice.channelId !== channelId) continue;
-        add(member, member.id);
-      }
+      for (const member of channel.members.values()) add(member, member.id);
     }
     return [...found.values()];
   }
@@ -273,28 +340,49 @@ function createVoiceStateHandler({
       if (member.user?.bot) return null;
       const state = voiceStateFor(guild, userId);
       if (box.channel && sameId(state?.channelId || member.voice?.channelId, box.channel.id)) return box.channel;
-      if (!stillInJoin(guild, userId, config.j2c_channel_id)) throw leftJoinChannel();
+      if (!stillInJoin(guild, userId, config.j2c_channel_id, box)) throw leftJoinChannel();
       let reservation = null;
       let moved = false;
+      const timeoutMs = pace.operationTimeoutMs;
       try {
         if (!box.channel) {
           reservation = reserveTempCategory(guild, config, member.id);
           await pacer.acquire(guild.id, "create");
           const freshCached = guild.members?.cache?.get?.(userId);
           const fresh = (canMove(freshCached) ? freshCached : null) || member;
-          if (!stillInJoin(guild, userId, config.j2c_channel_id)) throw leftJoinChannel();
-          box.channel = await createTempChannel(guild, fresh, {
+          if (!stillInJoin(guild, userId, config.j2c_channel_id, box)) throw leftJoinChannel();
+          const creating = createTempChannel(guild, fresh, {
             ...config,
             category_id: reservation.categoryId
           });
+          try {
+            box.channel = await withTimeout(creating, timeoutMs);
+          } catch (error) {
+            if (error?.code === "J2C_TIMEOUT") {
+              creating.then((channel) => {
+                if (!channel) return;
+                if (!box.channel) {
+                  box.channel = channel;
+                  return;
+                }
+                if (!sameId(box.channel.id, channel.id)) {
+                  cleanupCreated(guild, channel.id).catch(() => null);
+                }
+              }).catch(() => null);
+            }
+            throw error;
+          }
         }
         await pacer.acquire(guild.id, "move");
-        if (!stillInJoin(guild, userId, config.j2c_channel_id)) throw leftJoinChannel();
+        if (!stillInJoin(guild, userId, config.j2c_channel_id, box)) throw leftJoinChannel();
         const mover = voiceStateFor(guild, userId);
         const reason = "VoiceMaster: created temporary voice channel";
-        if (typeof mover?.setChannel === "function") await mover.setChannel(box.channel.id, reason);
-        else if (typeof member.voice?.setChannel === "function") await member.voice.setChannel(box.channel.id, reason);
-        else await guild.members.edit(userId, { channel: box.channel.id, reason });
+        const moving = typeof mover?.setChannel === "function"
+          ? mover.setChannel(box.channel.id, reason)
+          : typeof member.voice?.setChannel === "function"
+            ? member.voice.setChannel(box.channel.id, reason)
+            : guild.members.edit(userId, { channel: box.channel.id, reason });
+        await withTimeout(moving, timeoutMs);
         moved = true;
         return box.channel;
       } catch (error) {
@@ -306,8 +394,13 @@ function createVoiceStateHandler({
     });
   }
 
-  async function stayUntilMoved(guild, config, userId, fallbackMember) {
-    const box = { channel: null, member: fallbackMember };
+  async function stayUntilMoved(guild, config, userId, fallbackMember, fromChannelId) {
+    const box = {
+      channel: null,
+      member: fallbackMember,
+      fromChannelId: fromChannelId || null,
+      expectJoin: Date.now() + 3000
+    };
     let streak = 0;
     while (true) {
       try {
@@ -324,14 +417,14 @@ function createVoiceStateHandler({
           await renderInterface(box.channel, actor.id);
           return { temp: box.channel, ownerId: actor.id };
         }
-        if (!stillInJoin(guild, userId, config.j2c_channel_id)) {
+        if (await leftJoin(guild, userId, config.j2c_channel_id, box)) {
           if (box.channel) await cleanupCreated(guild, box.channel.id);
           return null;
         }
         const channel = await withChannelLock(`j2c-user:${guild.id}:${userId}`, () => openCall(guild, config, userId, box));
         if (!channel) {
           streak += 1;
-          if (!stillInJoin(guild, userId, config.j2c_channel_id)) {
+          if (await leftJoin(guild, userId, config.j2c_channel_id, box)) {
             if (box.channel) await cleanupCreated(guild, box.channel.id);
             return null;
           }
@@ -344,6 +437,11 @@ function createVoiceStateHandler({
         return { temp: channel, ownerId: actor.id };
       } catch (error) {
         if (leftVoice(error)) {
+          if (!(await leftJoin(guild, userId, config.j2c_channel_id, box))) {
+            streak += 1;
+            await pace.sleep(failureDelayMs(error, streak));
+            continue;
+          }
           if (box.channel) await cleanupCreated(guild, box.channel.id);
           return null;
         }
@@ -353,7 +451,7 @@ function createVoiceStateHandler({
           await cleanupCreated(guild, box.channel.id);
           box.channel = null;
         }
-        if (!stillInJoin(guild, userId, config.j2c_channel_id)) {
+        if (await leftJoin(guild, userId, config.j2c_channel_id, box)) {
           if (box.channel) await cleanupCreated(guild, box.channel.id);
           return null;
         }
@@ -362,11 +460,11 @@ function createVoiceStateHandler({
     }
   }
 
-  function startJoin(guild, config, userId, fallbackMember) {
+  function startJoin(guild, config, userId, fallbackMember, fromChannelId) {
     const key = `${guild.id}:${userId}`;
     const existing = pendingCreates.get(key);
     if (existing) return existing;
-    const creation = stayUntilMoved(guild, config, userId, fallbackMember).catch((error) => {
+    const creation = stayUntilMoved(guild, config, userId, fallbackMember, fromChannelId).catch((error) => {
       logThrottledError(`j2c-create:${guild.id}`, `[J2C create] ${guild.id}:${userId}`, error);
       return null;
     });
@@ -375,6 +473,22 @@ function createVoiceStateHandler({
       if (pendingCreates.get(key) === creation) pendingCreates.delete(key);
     });
     return creation;
+  }
+
+  function nudgeGuild(guild) {
+    const config = db.getConfig(guild.id);
+    if (!config?.j2c_channel_id) return 0;
+    const waiting = membersWaiting(guild, config.j2c_channel_id);
+    for (const member of waiting) startJoin(guild, config, member.id, member);
+    return waiting.length;
+  }
+
+  function lobbyBusy(guildId) {
+    const prefix = `${guildId}:`;
+    for (const key of pendingCreates.keys()) {
+      if (String(key).startsWith(prefix)) return true;
+    }
+    return false;
   }
 
   async function recoverGuild(guild) {
@@ -397,6 +511,19 @@ function createVoiceStateHandler({
       if (newState.channelId && joinedMemberId) {
         cancelOwnerRelease(newState.channelId, joinedMemberId);
       }
+
+      const joinedJoinToCreate =
+        sameId(newState.channelId, config.j2c_channel_id) &&
+        !sameId(oldState.channelId, newState.channelId);
+      const joinTask = joinedJoinToCreate && !newState.member?.user?.bot
+        ? startJoin(
+          guild,
+          config,
+          newState.id,
+          newState.member || guild.members?.cache?.get?.(newState.id),
+          oldState.channelId
+        )
+        : null;
 
       if (oldState.channelId && oldState.channelId !== newState.channelId) {
         try {
@@ -431,15 +558,7 @@ function createVoiceStateHandler({
         }
       }
 
-      const joinedJoinToCreate =
-        sameId(newState.channelId, config.j2c_channel_id) &&
-        !sameId(oldState.channelId, newState.channelId);
-      if (joinedJoinToCreate) {
-        if (newState.member?.user?.bot) return;
-        const cachedMember = newState.member || guild.members?.cache?.get?.(newState.id);
-        await startJoin(guild, config, newState.id, cachedMember);
-        return;
-      }
+      if (joinTask) await joinTask;
     } catch (error) {
       logThrottledError(
         `voice-state:${newState.guild?.id}`,
@@ -450,6 +569,8 @@ function createVoiceStateHandler({
   };
 
   handleVoiceStateUpdate.recoverGuild = recoverGuild;
+  handleVoiceStateUpdate.nudgeGuild = nudgeGuild;
+  handleVoiceStateUpdate.lobbyBusy = lobbyBusy;
   return handleVoiceStateUpdate;
 }
 

@@ -506,7 +506,10 @@ async function enforceVoice(oldState, newState) {
     }).catch((error) => console.error(`[voice guard] ${guild.id}:${member.id}`, error));
   }
   if (oldState.channelId !== newState.channelId && newState.channelId) {
-    await moveFollowers(guild, member.id, newState.channelId, new Set());
+    const lobbyId = db.getConfig(guild.id)?.j2c_channel_id;
+    if (!lobbyId || String(newState.channelId) !== String(lobbyId)) {
+      await moveFollowers(guild, member.id, newState.channelId, new Set());
+    }
   }
   if (channelId && require("../protect").memberHasGodmode(member)) {
     if (newState.serverMute) await setMuteSafe(member, false, "Protection godmode");

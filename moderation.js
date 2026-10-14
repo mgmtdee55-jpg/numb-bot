@@ -51,7 +51,7 @@ function missingPerm(message, permission) {
     return reply(
       message,
       "Missing Fake Permission",
-      "Only the **server owner** can use foreverban, unless they grant `foreverban_members`.\n\nOwner grant: `-fp add @role foreverban_members` or `-fp add @user foreverban_members`.\nFake `administrator` cannot use this."
+      "The server owner, and anyone with Discord **Administrator** checked, can use foreverban. A fake permission is not required.\n\nThe owner can still let someone without Administrator use it: `-fp add @role foreverban_members` or `-fp add @user foreverban_members`."
     );
   }
   if (permission === "administrator") {
@@ -306,7 +306,7 @@ function fakePermissionsHelp(prefix) {
     `\`${prefix}fp add @role ban_members\` — let that role use ban commands`,
     `\`${prefix}fp add @user ban_members\` — grant a specific user`,
     `\`${prefix}fp add @role administrator\` — let that role manage fake permissions and all normal moderation`,
-    `\`${prefix}fp add @role foreverban_members\` — owner-only grant for \`-fb\` / \`-fub\``,
+    `\`${prefix}fp add @role foreverban_members\` — let a role without Discord Administrator use \`-fb\` / \`-fub\``,
     `\`${prefix}fp remove <role> <permission>\``,
     `\`${prefix}fp list\``,
     `\`${prefix}fp reset\``,
@@ -820,12 +820,29 @@ async function handleForeverunban(message, args, prefix) {
   return reply(message, "Foreverban Lifted", `<@${userId}> can rejoin. The foreverban record is gone.`);
 }
 
+function isForeverbanCommand(command, prefix) {
+  const name = String(command || "").toLowerCase();
+  return name === `${prefix}foreverban`.toLowerCase()
+    || name === `${prefix}fb`.toLowerCase()
+    || name === `${prefix}foreverunban`.toLowerCase()
+    || name === `${prefix}fub`.toLowerCase();
+}
+
+function hasDiscordAdministrator(member) {
+  try {
+    return member?.permissions?.has?.(PermissionFlagsBits.Administrator) === true;
+  } catch {
+    return false;
+  }
+}
+
 async function handleCommand(message, args, prefix) {
-  if (!access.canModerate(message.member)) {
+  const command = args[0].toLowerCase();
+  const discordAdmin = hasDiscordAdministrator(message.member);
+  if (!access.canModerate(message.member) && !(isForeverbanCommand(command, prefix) && discordAdmin)) {
     await reply(message, "Access Denied", "Moderation commands are limited to Gods and the server owner.");
     return true;
   }
-  const command = args[0].toLowerCase();
   if (command === `${prefix}foreverban`.toLowerCase() || command === `${prefix}fb`.toLowerCase()) {
     await handleForeverban(message, args, prefix);
     return true;

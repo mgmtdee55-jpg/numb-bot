@@ -965,3 +965,162 @@ test("vchistory shows who is in a call and when they joined or left", async () =
   assert.match(textOf(gone), new RegExp(`<@${member.id}> joined`));
   assert.match(textOf(gone), /Nobody is connected right now/);
 });
+
+test("breakthru is assigned by alias and can join locked temporary calls", async () => {
+  const breakthru = require("../breakthru");
+  const guild = makeGuild();
+  const owner = makeMember(guild, OWNER, { name: "owner" });
+  const member = makeMember(guild, MEMBER, { name: "member" });
+  const target = makeMember(guild, TARGET, { name: "target" });
+  let created = 0;
+  guild.roles.create = async ({ name }) => {
+    created += 1;
+    const role = { id: `33300000000000011${created}`, name, position: 1, managed: false };
+    guild.roles.cache.set(role.id, role);
+    return role;
+  };
+  const edits = [];
+  const locked = {
+    id: "555000000000000021",
+    permissionOverwrites: {
+      async edit(roleId, permissions) {
+        edits.push({ roleId, permissions });
+      }
+    }
+  };
+  const joinToCreate = {
+    id: "555000000000000022",
+    permissionOverwrites: {
+      async edit() {
+        throw new Error("join to create was edited");
+      }
+    }
+  };
+  guild.channels.cache.set(locked.id, locked);
+  guild.channels.cache.set(joinToCreate.id, joinToCreate);
+  db.setConfig({
+    guild_id: guild.id,
+    j2c_channel_id: joinToCreate.id,
+    category_id: "555000000000000099"
+  });
+  db.addTemp({
+    channel_id: locked.id,
+    guild_id: guild.id,
+    owner_id: owner.id,
+    interface_message_id: null,
+    created_at: Date.now()
+  });
+  db.addTemp({
+    channel_id: joinToCreate.id,
+    guild_id: guild.id,
+    owner_id: owner.id,
+    interface_message_id: null,
+    created_at: Date.now()
+  });
+
+  assert.equal(breakthru.isAlias("break"), true);
+  assert.equal(breakthru.isAlias("break thru"), true);
+  assert.equal(breakthru.isAlias("breakthru"), true);
+  assert.equal(breakthru.isAlias("plus"), false);
+  assert.equal(titleOf(await run(guild, member, `-vc rank assign ${target.id} breakthru`)), "Access Denied");
+
+  const prompted = await run(guild, owner, `-vc rank assign ${target.id} break thru`);
+  assert.equal(titleOf(prompted), "Breakthru");
+  assert.equal(store.getBreakthruRole(guild.id), null);
+  const makeId = prompted.replies[0].components[0].components.find((button) => button.data.label === "Make a role").data.custom_id;
+  const make = {
+    customId: makeId,
+    user: { id: owner.id },
+    member: owner,
+    guild,
+    async deferUpdate() {},
+    async editReply(payload) { this.updated = payload; },
+    async update(payload) { this.updated = payload; },
+    async reply(payload) { this.repliedWith = payload; }
+  };
+  assert.equal(await breakthru.handleInteraction(make), true);
+  const roleId = store.getBreakthruRole(guild.id);
+  assert.equal(created, 1);
+  assert.equal(target.roles.cache.has(roleId), true);
+  assert.equal(store.getRank(guild.id, target.id), null);
+  assert.equal(edits.length, 1);
+  assert.equal(edits[0].roleId, roleId);
+  assert.equal(edits[0].permissions.Connect, true);
+  assert.match(make.updated.embeds[0].data.description, /locked temporary voice channels/);
+
+  const again = makeMessage(guild, `-vc rank assign ${target.id} break`, owner);
+  await breakthru.assign(again, target);
+  assert.equal(titleOf(again), "Already Has Breakthru");
+  assert.equal(created, 1);
+
+  guild.roles.cache.delete(roleId);
+  const replaced = makeMessage(guild, `-vc rank assign ${target.id} breakthru`, owner);
+  await breakthru.assign(replaced, target);
+  assert.equal(titleOf(replaced), "Breakthru Role Made");
+  assert.equal(created, 2);
+  assert.notEqual(store.getBreakthruRole(guild.id), roleId);
+  assert.equal(target.roles.cache.has(store.getBreakthruRole(guild.id)), true);
+
+  const other = makeGuild();
+  const otherOwner = makeMember(other, OWNER, { name: "owner" });
+  const otherTarget = makeMember(other, TARGET, { name: "target" });
+  const existing = { id: "222000000000000088", name: "Staff", position: 3, managed: false };
+  other.roles.cache.set(existing.id, existing);
+  const connectPrompt = await run(other, otherOwner, `-vc rank assign ${otherTarget.id} break`);
+  const pickId = connectPrompt.replies[0].components[0].components.find((button) => button.data.label === "Connect existing role").data.custom_id;
+  const pick = {
+    customId: pickId,
+    user: { id: otherOwner.id },
+    member: otherOwner,
+    guild: other,
+    async update(payload) { this.updated = payload; },
+    async reply(payload) { this.repliedWith = payload; }
+  };
+  assert.equal(await breakthru.handleInteraction(pick), true);
+  const menuId = pick.updated.components[0].components[0].data.custom_id;
+  const chosen = {
+    customId: menuId,
+    user: { id: otherOwner.id },
+    member: otherOwner,
+    guild: other,
+    values: [existing.id],
+    async deferUpdate() {},
+    async editReply(payload) { this.updated = payload; },
+    async update(payload) { this.updated = payload; },
+    async reply(payload) { this.repliedWith = payload; }
+  };
+  assert.equal(await breakthru.handleInteraction(chosen), true);
+  assert.equal(store.getBreakthruRole(other.id), existing.id);
+  assert.equal(otherTarget.roles.cache.has(existing.id), true);
+  assert.match(chosen.updated.embeds[0].data.description, new RegExp(existing.id));
+});
+
+test("followers are not dragged into the join-to-create lobby", async () => {
+  const { enforceVoice } = require("../systems/voice");
+  const guild = makeGuild();
+  const leader = makeMember(guild, "111000000000000201", { name: "leader" });
+  const follower = makeMember(guild, "111000000000000202", { name: "follower" });
+  const moved = [];
+  follower.voice.setChannel = async (channelId) => {
+    moved.push(channelId);
+    follower.voice.channelId = channelId;
+  };
+  store.setFollow(guild.id, follower.id, leader.id);
+  db.setConfig({
+    guild_id: guild.id,
+    j2c_channel_id: "555000000000000031",
+    category_id: "555000000000000032"
+  });
+
+  await enforceVoice(
+    { channelId: null, guild, member: leader },
+    { channelId: "555000000000000031", guild, member: leader }
+  );
+  assert.deepEqual(moved, []);
+
+  await enforceVoice(
+    { channelId: "555000000000000031", guild, member: leader },
+    { channelId: "555000000000000033", guild, member: leader }
+  );
+  assert.deepEqual(moved, ["555000000000000033"]);
+});

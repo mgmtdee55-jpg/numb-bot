@@ -1,9 +1,10 @@
+const { PermissionFlagsBits } = require("discord.js");
 const db = require("./db");
 
 const PERMISSIONS = {
   ban_members: { group: "Moderation", grants: "Banning and unbanning members" },
   kick_members: { group: "Moderation", grants: "Removing members from the server" },
-  foreverban_members: { group: "Moderation", grants: "Owner-tier foreverban / foreverunban (not granted by administrator)" },
+  foreverban_members: { group: "Moderation", grants: "Foreverban / foreverunban for someone who does not have Discord Administrator" },
   manage_messages: { group: "Moderation", grants: "Deleting and purging messages" },
   manage_nicknames: { group: "Moderation", grants: "Changing other members’ nicknames" },
   change_nickname: { group: "Moderation", grants: "Changing their own nickname" },
@@ -52,8 +53,16 @@ function canManageFakePermissions(member) {
   return hasAdministratorFakePermission(member);
 }
 
+function hasDiscordAdministrator(member) {
+  try {
+    return member?.permissions?.has?.(PermissionFlagsBits.Administrator) === true;
+  } catch {
+    return false;
+  }
+}
+
 function canForeverBan(member) {
-  return isGuildOwner(member) || grantedFakePermissions(member).has("foreverban_members");
+  return isGuildOwner(member) || hasDiscordAdministrator(member) || grantedFakePermissions(member).has("foreverban_members");
 }
 
 function hasFakePermission(member, permission) {

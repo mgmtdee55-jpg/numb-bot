@@ -360,6 +360,34 @@ test("foreverban is owner-tier and cannot be lifted with unban", async () => {
   assert.equal(db.isForeverbanned(guild.id, target.id), false);
 });
 
+test("discord administrator can foreverban without a fake permission", async () => {
+  const guild = makeGuild("foreverban-discord-admin");
+  const admin = makeMember(guild, "666100000000000002", {
+    roles: [{ id: "role-real-admin", name: "Admins", position: 8 }]
+  });
+  admin.permissions = { has: (flag) => flag === PermissionFlagsBits.Administrator };
+  const target = makeMember(guild, "666100000000000004", {
+    roles: [{ id: "role-plain-real", name: "Member", position: 1 }],
+    username: "raider"
+  });
+  const banned = makeMessage(guild, `-fb ${target.id} raid`, admin);
+  await handleCommand(banned, null, "-");
+  assert.equal(title(banned), "Member Foreverbanned");
+  assert.equal(db.isForeverbanned(guild.id, target.id), true);
+
+  const stranger = makeMember(guild, "666100000000000003", {
+    roles: [{ id: "role-not-admin", name: "Member", position: 2 }]
+  });
+  const other = makeMember(guild, "666100000000000005", {
+    roles: [{ id: "role-plain-real2", name: "Member", position: 1 }],
+    username: "other"
+  });
+  const denied = makeMessage(guild, `-fb ${other.id} raid`, stranger);
+  await handleCommand(denied, null, "-");
+  assert.equal(title(denied), "Access Denied");
+  assert.equal(db.isForeverbanned(guild.id, other.id), false);
+});
+
 test("a higher role cannot be banned, and the same role still can", async () => {
   const guild = makeGuild("hierarchy-guild");
   const owner = makeMember(guild, "888000000000000001", { owner: true });

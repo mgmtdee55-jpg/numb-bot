@@ -10,6 +10,7 @@ const {
 const db = require("./db");
 const { withChannelLock } = require("./channel-lock");
 const { logThrottledError } = require("./log-throttle");
+const breakthru = require("./breakthru");
 
 const tempInterfaceTasks = new Map();
 const serverInterfaceTasks = new Map();
@@ -537,6 +538,7 @@ async function createTempChannelInCategory(guild, member, config, categoryId) {
       created_at: Date.now()
     });
     holdChannelForMove(channel.id);
+    breakthru.allow(channel);
     return channel;
   } catch (error) {
     releaseChannelForMove(channel.id, { immediate: true });
@@ -699,9 +701,31 @@ async function createServerInterface(guild, config, existingConfig = null, { def
   }
 }
 
-async function cleanupEmptyTempChannels(guild) {
+function sleep(ms) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    timer.unref?.();
+  });
+}
+
+async function cleanupEmptyTempChannels(guild, options = {}) {
   const rows = db.getTempChannels(guild.id);
   const config = db.getConfig(guild.id);
+  const pauseMs = Number(options.pauseMs) || 0;
+  const shouldStop = typeof options.shouldStop === "function" ? options.shouldStop : null;
+  if (pauseMs > 0 || shouldStop) {
+    for (const row of rows) {
+      if (shouldStop?.()) return;
+      let removed = false;
+      try {
+        removed = await withChannelLock(row.channel_id, () => cleanupTempChannelUnlocked(guild, row, config)) === true;
+      } catch (error) {
+        logThrottledError(`temp-cleanup:${guild.id}`, `[temp cleanup] ${row.channel_id}`, error);
+      }
+      if (removed && pauseMs > 0) await sleep(pauseMs);
+    }
+    return;
+  }
   let nextIndex = 0;
   const workers = Array.from({ length: Math.min(8, rows.length) }, async () => {
     while (nextIndex < rows.length) {
@@ -747,6 +771,7 @@ async function cleanupTempChannelUnlocked(guild, row, config = db.getConfig(guil
 
     await channel.delete("VoiceMaster: empty temporary channel cleanup");
     db.markTempDeleted(row.channel_id);
+    return true;
   } catch (error) {
     logThrottledError(`temp-cleanup:${guild.id}`, `[temp cleanup] ${row.channel_id}`, error);
   }

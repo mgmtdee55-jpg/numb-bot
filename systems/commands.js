@@ -14,6 +14,7 @@ const modsetup = require("./modsetup");
 const afk = require("../afk");
 const extras = require("../extras");
 const { resolveMember, resolveRole } = require("../vouch/resolve");
+const breakthru = require("../breakthru");
 
 const RANK_COMMANDS = new Set(access.VOICE_COMMANDS);
 
@@ -129,7 +130,9 @@ async function handleVoiceRank(message, args) {
   const action = (args[2] || "list").toLowerCase();
   if (action === "assign") {
     const member = await resolveMember(message, args[3]);
-    return assignVoiceRank(message, member, access.parseRank(args.slice(4).join(" ")));
+    const rankText = args.slice(4).join(" ");
+    if (breakthru.isAlias(rankText)) return breakthru.assign(message, member);
+    return assignVoiceRank(message, member, access.parseRank(rankText));
   }
   if (action === "info") return voiceRankInfo(message, await resolveMember(message, args[3]) || message.member);
   return reply(message, "VC Ranks", `${access.ladderText()}\n\n${rankList(message.guild)}`);

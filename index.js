@@ -35,6 +35,7 @@ const personalBan = require("./personal-ban");
 const { card, loadEmojis, emojisLoaded } = require("./feedback");
 let cleanupRunning = false;
 let recoveryRunning = false;
+let lobbySweepRunning = false;
 const recoveryCursors = new Map();
 
 const client = new Client({
@@ -158,6 +159,21 @@ client.on("voiceStateUpdate", (before, after) => {
   handleVoiceState(before, after).catch((error) => {
     logThrottledError(`voice-state:${after?.guild?.id}`, "[voice state]", error);
   });
+});
+
+function sweepLobbies() {
+  if (!client.isReady()) return;
+  for (const guild of client.guilds.cache.values()) {
+    try {
+      handleVoiceState.nudgeGuild(guild);
+    } catch (error) {
+      logThrottledError(`j2c-nudge:${guild.id}`, `[J2C nudge] ${guild.id}`, error);
+    }
+  }
+}
+
+client.on("shardReady", () => {
+  sweepLobbies();
 });
 
 client.on("messageDelete", async (message) => {
@@ -287,16 +303,29 @@ client.on("interactionCreate", async (interaction) => {
   }
 });
 
+const lobbyTimer = setInterval(() => {
+  if (lobbySweepRunning || !client.isReady()) return;
+  lobbySweepRunning = true;
+  try {
+    sweepLobbies();
+  } finally {
+    lobbySweepRunning = false;
+  }
+}, 3000);
+lobbyTimer.unref?.();
+
 const cleanupTimer = setInterval(async () => {
   if (cleanupRunning || !client.isReady()) return;
   cleanupRunning = true;
   try {
     for (const guild of client.guilds.cache.values()) {
       try {
-        await cleanupEmptyTempChannels(guild);
-        handleVoiceState.recoverGuild(guild).catch((error) => {
-          logThrottledError(`j2c-recover:${guild.id}`, `[J2C recover] ${guild.id}`, error);
+        if (handleVoiceState.lobbyBusy(guild.id)) continue;
+        await cleanupEmptyTempChannels(guild, {
+          pauseMs: 250,
+          shouldStop: () => handleVoiceState.lobbyBusy(guild.id)
         });
+        handleVoiceState.nudgeGuild(guild);
       } catch (error) {
         console.error(`[periodic cleanup] ${guild.id}`, error);
       }

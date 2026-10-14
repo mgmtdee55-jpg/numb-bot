@@ -186,6 +186,7 @@ function ranksText() {
     "",
     "`-vc rank` — list ranked members",
     "`-vc rank assign @user <rank>` — assign a rank",
+    "`-vc rank assign @user breakthru` — join locked temporary calls. `break` and `break thru` work too",
     "`-vc unrank @user` — remove a rank",
     "`-vc rankinfo` — your rank, or `@user` for theirs, including who assigned it",
     "`-voice plus @role` / `-voice premium @role` / `-vouch premium plus @role`",

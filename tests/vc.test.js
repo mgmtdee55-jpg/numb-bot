@@ -540,6 +540,51 @@ test("join to create leaves move members neutral and does not edit permissions a
   assert.equal(channel.permissionOverwrites.edits.length, 0);
 });
 
+test("breakthru opens a new call without changing join-to-create setup", async () => {
+  const guild = makeGuild("breakthru-j2c");
+  const category = makeCategory(guild);
+  const member = makeMember(guild, "262626262626262627");
+  const roleId = "444000000000000099";
+  guild.roles.cache = new Map([[roleId, { id: roleId, name: "Breakthru" }]]);
+  require("../breakthru").save(guild.id, roleId);
+  db.setConfig({
+    guild_id: guild.id,
+    j2c_channel_id: "j2c-breakthru",
+    category_id: category.id,
+    server_interface_channel_id: "disabled",
+    server_interface_message_id: null,
+    name_template: "{nickname}'s Channel",
+    user_limit: 0,
+    bitrate: 64000,
+    cleanup_seconds: 0,
+    server_interface_enabled: 0
+  });
+
+  const created = await voice.createTempChannel(guild, member, db.getConfig(guild.id));
+  assert.deepEqual(created.createOptions.permissionOverwrites.map((overwrite) => overwrite.id), [
+    guild.roles.everyone.id,
+    member.id
+  ]);
+  assert.equal(created.permissionOverwrites.edits.length, 0);
+  await new Promise((resolve) => setTimeout(resolve, 1100));
+  assert.equal(created.permissionOverwrites.edits.length, 1);
+  assert.equal(created.permissionOverwrites.edits[0].target, roleId);
+  assert.equal(created.permissionOverwrites.edits[0].permissions.Connect, true);
+  assert.equal(created.permissionOverwrites.edits[0].permissions.ViewChannel, true);
+
+  const original = guild.channels.create.bind(guild.channels);
+  guild.channels.create = async (options) => {
+    const channel = await original(options);
+    channel.permissionOverwrites.edit = async () => {
+      throw new Error("overwrite failed");
+    };
+    return channel;
+  };
+  const stillCreated = await voice.createTempChannel(guild, member, db.getConfig(guild.id));
+  assert.equal(stillCreated.deleted, false);
+  assert.equal(stillCreated.createOptions.permissionOverwrites.length, 2);
+});
+
 test("unavailable guide emoji IDs are omitted rather than rendered as literal pseudo-emojis", async (t) => {
   const guild = makeGuild("missing-guide-emoji-guild");
   t.mock.method(console, "error", () => {});
@@ -2044,6 +2089,124 @@ test("a move rejected with 40032 retries while the member is still in join-to-cr
   assert.equal(creates, 1);
   assert.equal(moves, 2);
   assert.equal(member.voice.channelId, "temp-still-connected");
+});
+
+test("a stale voice cache still opens a call when the lobby lists the member", async () => {
+  const guild = makeGuild("j2c-listed-member-guild");
+  const member = makeMember(guild, "414141414141414141", { channelId: "old-call" });
+  const lobby = makeVoiceChannel(guild, "j2c", [member]);
+  guild.voiceStates.cache.set(member.id, { id: member.id, channelId: "old-call", member });
+  const handler = createVoiceStateHandler({
+    db: {
+      getConfig: () => ({ j2c_channel_id: lobby.id, category_id: "category" }),
+      getTempChannel: () => null
+    },
+    createTempChannel: async () => ({ id: "temp-from-list" }),
+    renderVoiceChannelInterface: async () => {},
+    cleanupEmptyTempChannels: async () => {}
+  });
+
+  await handler(
+    { channelId: "old-call" },
+    { guild, id: member.id, member, channelId: lobby.id }
+  );
+
+  assert.equal(member.voice.channelId, "temp-from-list");
+});
+
+test("a fetched voice state keeps a join going when the cache says they left", async () => {
+  const guild = makeGuild("j2c-fetch-still-there-guild");
+  const member = makeMember(guild, "424242424242424242", { channelId: "elsewhere" });
+  guild.voiceStates.cache.set(member.id, { id: member.id, channelId: "elsewhere", member });
+  guild.voiceStates.fetch = async () => ({ channelId: "j2c" });
+  const handler = createVoiceStateHandler({
+    db: {
+      getConfig: () => ({ j2c_channel_id: "j2c", category_id: "category" }),
+      getTempChannel: () => null
+    },
+    createTempChannel: async () => ({ id: "temp-fetched-state" }),
+    renderVoiceChannelInterface: async () => {},
+    cleanupEmptyTempChannels: async () => {}
+  });
+
+  await handler(
+    { channelId: null },
+    { guild, id: member.id, member, channelId: "j2c" }
+  );
+
+  assert.equal(member.voice.channelId, "temp-fetched-state");
+});
+
+test("a hung channel create cannot leave the next person sitting in join-to-create", async () => {
+  const guild = makeGuild("j2c-hang-guild");
+  const first = makeMember(guild, "434343434343434341", { channelId: "j2c" });
+  const second = makeMember(guild, "434343434343434342", { channelId: "j2c" });
+  const creates = [];
+  const handler = createVoiceStateHandler({
+    db: {
+      getConfig: () => ({ j2c_channel_id: "j2c", category_id: "category" }),
+      getTempChannel: () => null
+    },
+    pace: { operationTimeoutMs: 30 },
+    createTempChannel: async (_guild, member) => {
+      creates.push(member.id);
+      if (member.id === first.id && creates.filter((id) => id === first.id).length === 1) {
+        return new Promise(() => {});
+      }
+      return { id: `temp-${member.id}` };
+    },
+    renderVoiceChannelInterface: async () => {},
+    cleanupEmptyTempChannels: async () => {}
+  });
+
+  await Promise.all([
+    handler({ channelId: null }, { guild, id: first.id, member: first, channelId: "j2c" }),
+    handler({ channelId: null }, { guild, id: second.id, member: second, channelId: "j2c" })
+  ]);
+
+  assert.equal(second.voice.channelId, `temp-${second.id}`);
+  assert.equal(first.voice.channelId, `temp-${first.id}`);
+  assert.ok(creates.filter((id) => id === first.id).length >= 2);
+});
+
+test("someone already in the lobby is picked up without a new join event", async () => {
+  const guild = makeGuild("j2c-nudge-guild");
+  const member = makeMember(guild, "444444444444444441", { channelId: "j2c" });
+  guild.voiceStates.cache.set(member.id, { id: member.id, channelId: "j2c", member });
+  const handler = createVoiceStateHandler({
+    db: {
+      getConfig: () => ({ j2c_channel_id: "j2c", category_id: "category" }),
+      getTempChannel: () => null
+    },
+    createTempChannel: async () => ({ id: "temp-nudged" }),
+    renderVoiceChannelInterface: async () => {},
+    cleanupEmptyTempChannels: async () => {}
+  });
+
+  assert.equal(handler.nudgeGuild(guild), 1);
+  await handler.recoverGuild(guild);
+  assert.equal(member.voice.channelId, "temp-nudged");
+});
+
+test("the lobby sweep still opens a call when only the channel member list shows them", async () => {
+  const guild = makeGuild("j2c-sweep-listed-guild");
+  const member = makeMember(guild, "454545454545454541", { channelId: "old-call" });
+  makeVoiceChannel(guild, "j2c", [member]);
+  member.voice.channelId = "old-call";
+  guild.voiceStates.cache.set(member.id, { id: member.id, channelId: "old-call", member });
+  const handler = createVoiceStateHandler({
+    db: {
+      getConfig: () => ({ j2c_channel_id: "j2c", category_id: "category" }),
+      getTempChannel: () => null
+    },
+    createTempChannel: async () => ({ id: "temp-sweep-listed" }),
+    renderVoiceChannelInterface: async () => {},
+    cleanupEmptyTempChannels: async () => {}
+  });
+
+  assert.equal(handler.nudgeGuild(guild), 1);
+  await handler.recoverGuild(guild);
+  assert.equal(member.voice.channelId, "temp-sweep-listed");
 });
 
 test("a real voice join creates and moves when Discord did not cache the member", async () => {

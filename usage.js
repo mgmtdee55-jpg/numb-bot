@@ -355,9 +355,9 @@ const SPECS = {
   },
   vcrankassign: {
     name: "vc rank",
-    description: "Assign a voice rank to a member.",
+    description: "Assign a voice rank to a member. Use breakthru, break, or break thru for Breakthru.",
     syntax: "vc rank assign (user) (rank)",
-    example: "vc rank assign @user premium"
+    example: "vc rank assign @user breakthru"
   },
   vouchlimituser: {
     name: "antinuke vouch limit user",

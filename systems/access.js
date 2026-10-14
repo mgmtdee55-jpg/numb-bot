@@ -384,6 +384,7 @@ function ladderText() {
     "",
     "Only Gods can add or remove these roles, and only with the bot.",
     "Verified Sellers can assign a rank with `-vc rank assign`. Setting the roles and unrank stay with Gods and the server owner.",
+    "**Breakthru** joins locked temporary calls. Assign it with `-vc rank assign @user breakthru`. `break` and `break thru` work too.",
     "Gods and the server owner can whitelist one command with `-grant <command> @user`."
   ].join("\n");
 }

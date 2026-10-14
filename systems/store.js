@@ -132,6 +132,11 @@ CREATE TABLE IF NOT EXISTS voice_shields (
   created_at INTEGER NOT NULL,
   PRIMARY KEY (guild_id, user_id)
 );
+
+CREATE TABLE IF NOT EXISTS breakthru_roles (
+  guild_id TEXT PRIMARY KEY,
+  role_id TEXT NOT NULL
+);
 `);
 
 function key(value) {
@@ -240,7 +245,13 @@ const statements = {
   removeVoiceShield: connection.prepare("DELETE FROM voice_shields WHERE guild_id=? AND user_id=?"),
   hasVoiceShieldRow: connection.prepare("SELECT 1 FROM voice_shields WHERE guild_id=? AND user_id=?"),
   listVoiceShields: connection.prepare("SELECT * FROM voice_shields WHERE guild_id=? ORDER BY created_at ASC"),
-  listCommandGrantsForUser: connection.prepare("SELECT * FROM command_grants WHERE guild_id=? AND user_id=? ORDER BY command")
+  listCommandGrantsForUser: connection.prepare("SELECT * FROM command_grants WHERE guild_id=? AND user_id=? ORDER BY command"),
+  getBreakthruRole: connection.prepare("SELECT role_id FROM breakthru_roles WHERE guild_id=?"),
+  setBreakthruRole: connection.prepare(`
+    INSERT INTO breakthru_roles(guild_id, role_id) VALUES(?,?)
+    ON CONFLICT(guild_id) DO UPDATE SET role_id=excluded.role_id
+  `),
+  listBreakthruRoles: connection.prepare("SELECT guild_id, role_id FROM breakthru_roles")
 };
 
 function saveGuard(guildId, userId, patch) {
@@ -484,6 +495,15 @@ module.exports = {
   },
   listCommandGrantsForUser(guildId, userId) {
     return statements.listCommandGrantsForUser.all(key(guildId), key(userId));
+  },
+  getBreakthruRole(guildId) {
+    return statements.getBreakthruRole.get(key(guildId))?.role_id || null;
+  },
+  setBreakthruRole(guildId, roleId) {
+    statements.setBreakthruRole.run(key(guildId), key(roleId));
+  },
+  listBreakthruRoles() {
+    return statements.listBreakthruRoles.all();
   }
 };
 
