@@ -36,7 +36,9 @@ function retryDelayMs(error) {
 }
 
 function failureDelayMs(error, streak) {
+  if (error?.code === "J2C_WAITING") return 1000;
   if (error?.code === "J2C_TIMEOUT") return 200;
+  if (error?.code === "J2C_GUILD_FULL") return 1000;
   if (isRateLimitError(error)) return retryDelayMs(error);
   const permissionDenied = Number(error?.code) === 50013 || Number(error?.status) === 403;
   if (permissionDenied) return 30000;
@@ -153,17 +155,46 @@ function createGuildPacer(pace) {
     while (queue.active < pace.maxConcurrent && queue.waiting.length) {
       const task = queue.waiting.shift();
       queue.active += 1;
-    Promise.resolve()
-      .then(task.operation)
-      .then(task.resolve, task.reject)
-      .finally(() => {
-        queue.active -= 1;
+      let settled = false;
+      const started = pace.now();
+      const finish = (error, value, failed) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(watchdog);
+        queue.active = Math.max(0, queue.active - 1);
+        if (failed) task.reject(error);
+        else task.resolve(value);
         pump(guildId);
-      });
+      };
+      // One operation can wait out a rate-limit pause, then create and move.
+      // If it runs longer than that, the slot is released so the rest of the
+      // lobby is not stuck behind a Discord request that never comes back.
+      const allowance = Math.max(0, queue.pausedUntil - started)
+        + (pace.operationTimeoutMs * 2)
+        + pace.createWindowMs
+        + pace.moveWindowMs
+        + 2000;
+      const watchdog = setTimeout(() => {
+        const error = new Error("Join to create queue stalled");
+        error.code = "J2C_TIMEOUT";
+        finish(error, null, true);
+      }, allowance);
+      watchdog.unref?.();
+      Promise.resolve()
+        .then(task.operation)
+        .then(
+          (value) => finish(null, value, false),
+          (error) => finish(error, null, true)
+        );
     }
   }
 
-  return { acquire, penalize, schedule };
+  function isActive(guildId) {
+    const queue = guilds.get(guildId);
+    return !!queue && queue.active > 0;
+  }
+
+  return { acquire, penalize, schedule, isActive };
 }
 
 function createVoiceStateHandler({
@@ -186,6 +217,42 @@ function createVoiceStateHandler({
   };
   const pendingCreates = new Map();
   const pacer = createGuildPacer(pace);
+  const discordSlots = new Map();
+  const DISCORD_INFLIGHT_LIMIT = 2;
+
+  function slotBucket(guildId, kind) {
+    let guildSlots = discordSlots.get(guildId);
+    if (!guildSlots) {
+      guildSlots = { create: new Set(), move: new Set() };
+      discordSlots.set(guildId, guildSlots);
+    }
+    return guildSlots[kind];
+  }
+
+  // Two unanswered Discord calls is the cap. A third request would sit behind
+  // them in Discord's queue and, once that queue is stuck, every later retry
+  // makes the wait permanent. The slot stays until that call settles.
+  function takeDiscordSlot(guildId, kind) {
+    const slots = slotBucket(guildId, kind);
+    if (slots.size >= DISCORD_INFLIGHT_LIMIT) {
+      const error = new Error("Join to create is waiting for Discord");
+      error.code = "J2C_WAITING";
+      throw error;
+    }
+    const slot = { startedAt: pace.now() };
+    slots.add(slot);
+    return {
+      bind(promise) {
+        Promise.resolve(promise).then(
+          () => slots.delete(slot),
+          () => slots.delete(slot)
+        );
+      },
+      release() {
+        slots.delete(slot);
+      }
+    };
+  }
 
   function voiceStateFor(guild, userId) {
     return guild?.voiceStates?.cache?.get?.(userId) || guild?.voiceStates?.cache?.get?.(String(userId)) || null;
@@ -351,15 +418,20 @@ function createVoiceStateHandler({
           const freshCached = guild.members?.cache?.get?.(userId);
           const fresh = (canMove(freshCached) ? freshCached : null) || member;
           if (!stillInJoin(guild, userId, config.j2c_channel_id, box)) throw leftJoinChannel();
-          const creating = createTempChannel(guild, fresh, {
-            ...config,
-            category_id: reservation.categoryId
-          });
+          const slot = takeDiscordSlot(guild.id, "create");
+          let creating;
+          let keepCreate = false;
           try {
+            creating = createTempChannel(guild, fresh, {
+              ...config,
+              category_id: reservation.categoryId
+            });
+            slot.bind(creating);
             box.channel = await withTimeout(creating, timeoutMs);
           } catch (error) {
-            if (error?.code === "J2C_TIMEOUT") {
-              creating.then((channel) => {
+            if (error?.code === "J2C_TIMEOUT" && creating) {
+              keepCreate = true;
+              Promise.resolve(creating).then((channel) => {
                 if (!channel) return;
                 if (!box.channel) {
                   box.channel = channel;
@@ -371,20 +443,32 @@ function createVoiceStateHandler({
               }).catch(() => null);
             }
             throw error;
+          } finally {
+            if (!keepCreate) slot.release();
           }
         }
         await pacer.acquire(guild.id, "move");
         if (!stillInJoin(guild, userId, config.j2c_channel_id, box)) throw leftJoinChannel();
-        const mover = typeof box.voiceState?.setChannel === "function" ? box.voiceState : voiceStateFor(guild, userId);
-        const reason = "VoiceMaster: created temporary voice channel";
-        const moving = typeof mover?.setChannel === "function"
-          ? mover.setChannel(box.channel.id, reason)
-          : typeof member.voice?.setChannel === "function"
-            ? member.voice.setChannel(box.channel.id, reason)
-            : guild.members.edit(userId, { channel: box.channel.id, reason });
-        await withTimeout(moving, timeoutMs);
-        moved = true;
-        return box.channel;
+        const moveSlot = takeDiscordSlot(guild.id, "move");
+        let keepMove = false;
+        try {
+          const mover = typeof box.voiceState?.setChannel === "function" ? box.voiceState : voiceStateFor(guild, userId);
+          const reason = "VoiceMaster: created temporary voice channel";
+          const moving = typeof mover?.setChannel === "function"
+            ? mover.setChannel(box.channel.id, reason)
+            : typeof member.voice?.setChannel === "function"
+              ? member.voice.setChannel(box.channel.id, reason)
+              : guild.members.edit(userId, { channel: box.channel.id, reason });
+          moveSlot.bind(moving);
+          await withTimeout(moving, timeoutMs);
+          moved = true;
+          return box.channel;
+        } catch (error) {
+          if (error?.code === "J2C_TIMEOUT") keepMove = true;
+          throw error;
+        } finally {
+          if (!keepMove) moveSlot.release();
+        }
       } catch (error) {
         if (isRateLimitError(error)) pacer.penalize(guild.id, error);
         throw error;
@@ -416,8 +500,8 @@ function createVoiceStateHandler({
           if (box.channel) await cleanupCreated(guild, box.channel.id);
           return null;
         }
-        if (!box.poolTried) {
-          box.poolTried = true;
+        if (!box.poolAt || Date.now() >= box.poolAt) {
+          box.poolAt = Date.now() + 3000;
           try {
             const pooled = await withTimeout(
               require("./pool").moveFromLobby(guild, actor, config.j2c_channel_id, box.voiceState),
@@ -425,7 +509,9 @@ function createVoiceStateHandler({
             );
             if (pooled?.channel) return { temp: pooled.channel, ownerId: actor.id };
           } catch (poolError) {
-            logThrottledError(`j2c-pool:${guild.id}`, `[J2C pool] ${guild.id}:${userId}`, poolError);
+            if (poolError?.code !== "J2C_TIMEOUT") {
+              logThrottledError(`j2c-pool:${guild.id}`, `[J2C pool] ${guild.id}:${userId}`, poolError);
+            }
           }
         }
         const channel = await withChannelLock(`j2c-user:${guild.id}:${userId}`, () => openCall(guild, config, userId, box));
@@ -453,7 +539,9 @@ function createVoiceStateHandler({
           return null;
         }
         streak += 1;
-        logThrottledError(`j2c-create:${guild.id}`, `[J2C create] ${guild.id}:${userId}`, error);
+        if (error?.code !== "J2C_TIMEOUT" && error?.code !== "J2C_WAITING") {
+          logThrottledError(`j2c-create:${guild.id}`, `[J2C create] ${guild.id}:${userId}`, error);
+        }
         if (channelMissing(error) && box.channel) {
           await cleanupCreated(guild, box.channel.id);
           box.channel = null;
@@ -461,6 +549,14 @@ function createVoiceStateHandler({
         if (await leftJoin(guild, userId, config.j2c_channel_id, box)) {
           if (box.channel) await cleanupCreated(guild, box.channel.id);
           return null;
+        }
+        if (error?.code === "J2C_GUILD_FULL" && typeof cleanupEmptyTempChannels === "function") {
+          box.poolAt = 0;
+          try {
+            await cleanupEmptyTempChannels(guild, { limit: 10, pauseMs: 200 });
+          } catch (cleanupError) {
+            logThrottledError(`j2c-cleanup:${guild.id}`, `[J2C cleanup] ${guild.id}`, cleanupError);
+          }
         }
         await pace.sleep(failureDelayMs(error, streak));
       }
@@ -499,11 +595,7 @@ function createVoiceStateHandler({
   }
 
   function lobbyBusy(guildId) {
-    const prefix = `${guildId}:`;
-    for (const key of pendingCreates.keys()) {
-      if (String(key).startsWith(prefix)) return true;
-    }
-    return false;
+    return pacer.isActive(guildId);
   }
 
   async function recoverGuild(guild) {

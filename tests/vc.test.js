@@ -2169,6 +2169,194 @@ test("a hung channel create cannot leave the next person sitting in join-to-crea
   assert.ok(creates.filter((id) => id === first.id).length >= 2);
 });
 
+test("unanswered Discord creates cannot stack behind the lobby queue", async () => {
+  const guild = makeGuild("j2c-inflight-cap-guild");
+  const members = [
+    makeMember(guild, "646464646464646461", { channelId: "j2c" }),
+    makeMember(guild, "646464646464646462", { channelId: "j2c" }),
+    makeMember(guild, "646464646464646463", { channelId: "j2c" })
+  ];
+  let started = 0;
+  const gates = [];
+  const sleeps = [];
+  const handler = createVoiceStateHandler({
+    db: {
+      getConfig: () => ({ j2c_channel_id: "j2c", category_id: "category" }),
+      getTempChannel: () => null
+    },
+    pace: {
+      operationTimeoutMs: 20,
+      sleep: () => new Promise((resolve) => sleeps.push(resolve))
+    },
+    createTempChannel: (_guild, member) => {
+      started += 1;
+      return new Promise((resolve) => {
+        gates.push(() => resolve({ id: `temp-${member.id}` }));
+      });
+    },
+    renderVoiceChannelInterface: async () => {},
+    cleanupEmptyTempChannels: async () => {}
+  });
+
+  const runs = members.map((member) => handler(
+    { channelId: null },
+    { guild, id: member.id, member, channelId: "j2c" }
+  ));
+  const until = async (check) => {
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      if (check()) return;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    throw new Error(`join queue did not settle (started ${started}, sleeping ${sleeps.length})`);
+  };
+
+  await until(() => started === 2 && sleeps.length >= 2);
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  assert.equal(started, 2);
+
+  gates[0]();
+  while (sleeps.length) sleeps.shift()();
+  await until(() => started === 3);
+  assert.equal(started, 3);
+
+  const done = Promise.all(runs);
+  for (let turn = 0; turn < 15; turn += 1) {
+    while (gates.length) gates.shift()();
+    while (sleeps.length) sleeps.shift()();
+    const status = await Promise.race([
+      done.then(() => "done"),
+      new Promise((resolve) => setTimeout(() => resolve("wait"), 30))
+    ]);
+    if (status === "done") break;
+  }
+  await done;
+  assert.deepEqual(members.map((member) => member.voice.channelId), members.map((member) => `temp-${member.id}`));
+});
+
+test("a retry wait does not block empty-channel cleanup", async () => {
+  const guild = makeGuild("j2c-backoff-cleanup-guild");
+  const member = makeMember(guild, "616161616161616161", { channelId: "j2c" });
+  const clock = manualClock();
+  const wait = clock.pace.sleep;
+  let calls = 0;
+  let busyWhileWaiting = null;
+  let handler;
+  handler = createVoiceStateHandler({
+    db: {
+      getConfig: () => ({ j2c_channel_id: "j2c", category_id: "category" }),
+      getTempChannel: () => null
+    },
+    pace: {
+      now: clock.pace.now,
+      sleep: async (ms) => {
+        if (calls > 0 && busyWhileWaiting === null) busyWhileWaiting = handler.lobbyBusy(guild.id);
+        await wait(ms);
+      }
+    },
+    createTempChannel: async () => {
+      calls += 1;
+      if (calls === 1) throw new Error("temporary create failure");
+      return { id: "temp-after-wait" };
+    },
+    renderVoiceChannelInterface: async () => {},
+    cleanupEmptyTempChannels: async () => {}
+  });
+
+  await handler(
+    { channelId: null },
+    { guild, id: member.id, member, channelId: "j2c" }
+  );
+
+  assert.equal(busyWhileWaiting, false);
+  assert.equal(handler.lobbyBusy(guild.id), false);
+  assert.equal(member.voice.channelId, "temp-after-wait");
+});
+
+test("Discord reporting a full category still opens a temporary channel", async () => {
+  const guild = makeGuild("j2c-discord-category-full-guild");
+  const category = makeCategory(guild);
+  const member = makeMember(guild, "626262626262626262");
+  db.setConfig({
+    guild_id: guild.id,
+    j2c_channel_id: "category-full-j2c",
+    category_id: category.id,
+    category_ids: JSON.stringify([category.id]),
+    server_interface_channel_id: "disabled",
+    server_interface_message_id: null,
+    name_template: "{nickname}'s Channel",
+    user_limit: 0,
+    bitrate: 64000,
+    cleanup_seconds: 0,
+    server_interface_enabled: 0
+  });
+  const original = guild.channels.create.bind(guild.channels);
+  guild.channels.create = async (options) => {
+    if (options.type === ChannelType.GuildVoice && options.parent === category.id) {
+      throw Object.assign(new Error("Maximum number of channels in category reached (50)"), { code: 30013 });
+    }
+    return original(options);
+  };
+
+  const created = await voice.createTempChannel(guild, member, db.getConfig(guild.id));
+  assert.equal(created.type, ChannelType.GuildVoice);
+  assert.notEqual(created.parentId, category.id);
+  assert.equal(guild.channels.cache.get(created.parentId).type, ChannelType.GuildCategory);
+});
+
+test("a full server clears empty calls and then creates the channel", async () => {
+  const guild = makeGuild("j2c-guild-full-guild");
+  const category = makeCategory(guild);
+  const j2c = makeVoiceChannel(guild);
+  const member = makeMember(guild, "636363636363636363", { channelId: j2c.id });
+  db.setConfig({
+    guild_id: guild.id,
+    j2c_channel_id: j2c.id,
+    category_id: category.id,
+    category_ids: JSON.stringify([category.id]),
+    server_interface_channel_id: "disabled",
+    server_interface_message_id: null,
+    name_template: "{nickname}'s Channel",
+    user_limit: 0,
+    bitrate: 64000,
+    cleanup_seconds: 0,
+    server_interface_enabled: 0
+  });
+  const original = guild.channels.create.bind(guild.channels);
+  let voiceCreates = 0;
+  guild.channels.create = async (options) => {
+    if (options.type === ChannelType.GuildVoice) {
+      voiceCreates += 1;
+      if (voiceCreates === 1) {
+        throw Object.assign(new Error("Maximum number of server channels reached (500)"), { code: 30013 });
+      }
+    }
+    return original(options);
+  };
+  let cleaned = 0;
+  const handler = createVoiceStateHandler({
+    db,
+    pace: manualClock().pace,
+    createTempChannel: voice.createTempChannel,
+    renderVoiceChannelInterface: async () => {},
+    cleanupEmptyTempChannels: async (cleanedGuild, options) => {
+      cleaned += 1;
+      assert.equal(cleanedGuild.id, guild.id);
+      assert.equal(options.limit, 10);
+    },
+    cleanupTempChannel: async () => {}
+  });
+
+  await handler(
+    { channelId: null },
+    { guild, id: member.id, member, channelId: j2c.id }
+  );
+
+  assert.equal(cleaned, 1);
+  assert.equal(voiceCreates, 2);
+  assert.ok(member.voice.channelId);
+  assert.notEqual(member.voice.channelId, j2c.id);
+});
+
 test("join to create moves from the voice state when the member lookup never returns", async () => {
   const guild = makeGuild("j2c-fetch-hang");
   const member = makeMember(guild, "464646464646464641", { channelId: "j2c" });

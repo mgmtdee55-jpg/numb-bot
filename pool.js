@@ -93,7 +93,7 @@ function retryDelayMs(error) {
 function lane(guildId) {
   let state = lanes.get(guildId);
   if (!state) {
-    state = { running: false, pending: 0, cancelled: false, creates: [], idle: Promise.resolve(), wake: null };
+    state = { running: false, pending: 0, cancelled: false, creates: [], unsettled: new Set(), idle: Promise.resolve(), wake: null };
     lanes.set(guildId, state);
   }
   return state;
@@ -844,6 +844,13 @@ async function createEmpty(guild, config) {
     error.code = "POOL_NO_CATEGORY";
     throw error;
   }
+  const state = lane(guild.id);
+  if (!state.unsettled) state.unsettled = new Set();
+  if (state.unsettled.size >= 2) {
+    const error = new Error("Pool create is waiting for Discord");
+    error.code = "POOL_WAITING";
+    throw error;
+  }
   const settings = voiceSettings(guild);
   const creating = guild.channels.create({
     name: waitingName(config.name_template),
@@ -858,12 +865,18 @@ async function createEmpty(guild, config) {
     }],
     reason: "VoiceMaster: empty pool channel"
   });
+  const tracked = Promise.resolve(creating);
+  state.unsettled.add(tracked);
+  tracked.then(
+    () => state.unsettled.delete(tracked),
+    () => state.unsettled.delete(tracked)
+  );
   let channel;
   try {
-    channel = await withTimeout(creating, CREATE_TIMEOUT_MS);
+    channel = await withTimeout(tracked, CREATE_TIMEOUT_MS);
   } catch (error) {
     if (error?.code === "POOL_TIMEOUT") {
-      creating.then((late) => {
+      tracked.then((late) => {
         if (!late?.id || db.getPoolChannel(late.id)) return;
         db.insertPoolChannel({
           channel_id: late.id,
@@ -927,6 +940,11 @@ async function runLane(guild) {
           state.pending += 1;
           logThrottledError(`pool-create:${guild.id}`, `[pool create] ${guild.id}`, error);
           await sleep(retryDelayMs(error));
+          continue;
+        }
+        if (error?.code === "POOL_WAITING") {
+          state.pending += 1;
+          await sleep(CREATE_TIMEOUT_MS);
           continue;
         }
         if (error?.code === "POOL_TIMEOUT") {

@@ -322,10 +322,11 @@ const cleanupTimer = setInterval(async () => {
   try {
     for (const guild of client.guilds.cache.values()) {
       try {
-        if (handleVoiceState.lobbyBusy(guild.id)) continue;
+        const busy = handleVoiceState.lobbyBusy(guild.id);
         await cleanupEmptyTempChannels(guild, {
-          pauseMs: 250,
-          shouldStop: () => handleVoiceState.lobbyBusy(guild.id)
+          pauseMs: busy ? 500 : 250,
+          limit: busy ? 3 : 40,
+          shouldStop: busy ? null : () => handleVoiceState.lobbyBusy(guild.id)
         });
         handleVoiceState.nudgeGuild(guild);
       } catch (error) {

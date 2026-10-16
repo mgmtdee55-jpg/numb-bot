@@ -307,10 +307,26 @@ function isRateLimitError(error) {
   return Number(error?.status) === 429 || Number(error?.code) === 429 || error?.name === "RateLimitError";
 }
 
+function channelLimitKind(error) {
+  if (isRateLimitError(error)) return null;
+  const message = String(error?.message || "");
+  const code = Number(error?.code);
+  const mentionsChannels = code === 30013 || /maximum number of (?:server |guild )?channels/i.test(message);
+  if (!mentionsChannels) return null;
+  if (/category/i.test(message)) return "category";
+  if (/server|guild/i.test(message)) return "guild";
+  return code === 30013 ? "category" : null;
+}
+
 function isCategoryLimitError(error) {
-  if (isRateLimitError(error)) return false;
-  if (Number(error?.code) === 30013) return true;
-  return /maximum number of channels|channels in category/i.test(String(error?.message || ""));
+  return channelLimitKind(error) === "category";
+}
+
+function guildFullError(error) {
+  const full = new Error("This server is at Discord's channel limit.");
+  full.code = "J2C_GUILD_FULL";
+  if (error) full.cause = error;
+  return full;
 }
 
 function everyoneRoleId(guild) {
@@ -601,20 +617,28 @@ async function usableCategoryIds(guild, config) {
 async function createTempChannel(guild, member, config) {
   const categoryIds = await usableCategoryIds(guild, config);
   let lastError;
-  for (const [index, categoryId] of categoryIds.entries()) {
-    const isLast = index === categoryIds.length - 1;
+  for (const categoryId of categoryIds) {
     try {
       return await createTempChannelInCategory(guild, member, config, categoryId);
     } catch (error) {
       lastError = error;
       if (isRateLimitError(error)) throw error;
-      if (!isCategoryLimitError(error) || isLast) throw error;
+      const kind = channelLimitKind(error);
+      if (kind === "guild") throw guildFullError(error);
+      if (kind !== "category") throw error;
     }
   }
-  const extra = await createOverflowCategory(guild, config);
+  let extra;
+  try {
+    extra = await createOverflowCategory(guild, config);
+  } catch (error) {
+    if (channelLimitKind(error) === "guild") throw guildFullError(error);
+    throw error || lastError;
+  }
   try {
     return await createTempChannelInCategory(guild, member, config, extra);
   } catch (error) {
+    if (channelLimitKind(error) === "guild") throw guildFullError(error);
     throw error || lastError;
   }
 }
@@ -713,16 +737,22 @@ async function cleanupEmptyTempChannels(guild, options = {}) {
   const config = db.getConfig(guild.id);
   const pauseMs = Number(options.pauseMs) || 0;
   const shouldStop = typeof options.shouldStop === "function" ? options.shouldStop : null;
-  if (pauseMs > 0 || shouldStop) {
+  const requestedLimit = Number(options.limit);
+  const maxDeletes = Number.isInteger(requestedLimit) && requestedLimit > 0 ? requestedLimit : Infinity;
+  if (pauseMs > 0 || shouldStop || Number.isFinite(maxDeletes)) {
+    let removedCount = 0;
     for (const row of rows) {
-      if (shouldStop?.()) return;
+      if (shouldStop?.() || removedCount >= maxDeletes) return;
       let removed = false;
       try {
         removed = await withChannelLock(row.channel_id, () => cleanupTempChannelUnlocked(guild, row, config)) === true;
       } catch (error) {
         logThrottledError(`temp-cleanup:${guild.id}`, `[temp cleanup] ${row.channel_id}`, error);
       }
-      if (removed && pauseMs > 0) await sleep(pauseMs);
+      if (!removed) continue;
+      removedCount += 1;
+      if (removedCount >= maxDeletes) return;
+      if (pauseMs > 0) await sleep(pauseMs);
     }
     return;
   }
@@ -882,6 +912,7 @@ module.exports = {
   panelRows,
   reserveTempCategory,
   isRateLimitError,
+  channelLimitKind,
   holdChannelForMove,
   releaseChannelForMove,
   clampBitrate,
