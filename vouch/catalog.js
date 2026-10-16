@@ -285,7 +285,7 @@ function rawCategories(prefix) {
       ["unforcenickname", "clear a nickname"],
       ["forcerolestrip", "block one role"],
       ["unforcerolestrip", "clear a role block"],
-      ["rolestrip", "strip a role from everyone"]
+      ["rolestrip", "strip a role, with exemptions"]
     ])],
     ["Social", block(prefix, [
       ["instagram", "view a profile (ig, insta)"],

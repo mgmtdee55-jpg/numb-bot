@@ -687,7 +687,7 @@ const SPECS = {
   },
   rolestrip: {
     name: "rolestrip",
-    description: "Remove a role from everyone who has it.",
+    description: "Remove a role from everyone who has it. Exempt members from the menu, then confirm.",
     syntax: "rolestrip (role)",
     example: "rolestrip Muted"
   },

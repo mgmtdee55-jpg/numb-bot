@@ -11,6 +11,7 @@ process.env.DB_PATH = path.join(scratch, "vc.sqlite");
 process.env.PREFIX = "-";
 
 const vouch = require("../vouch");
+const extras = require("../extras");
 const rolesApi = require("../vouch/roles");
 const staffStore = require("../systems/store");
 const { handleCommand } = require("../commands");
@@ -131,12 +132,17 @@ function makeMember(guild, userId, options = {}) {
       username: options.username || `user-${userId}`
     },
     roles: { cache, highest: { position: options.position || 1 } },
+    dms: [],
     async setNickname(nickname) {
       member.nickname = nickname;
       member.nicknames = member.nicknames || [];
       member.nicknames.push(nickname);
     }
   };
+  member.send = async (payload) => {
+    member.dms.push(payload);
+  };
+  member.user.send = member.send;
   bindRoles(member);
   guild.members.cache.set(userId, member);
   if (options.owner) guild.ownerId = userId;
@@ -202,6 +208,25 @@ function titleOf(message) {
 
 function textOf(message) {
   return message.replies.at(-1).embeds[0].data.description;
+}
+
+function rowsOf(payload) {
+  return (payload?.components || []).map((row) => (typeof row.toJSON === "function" ? row.toJSON() : row).components);
+}
+
+function stripInteraction(group, customId, { values = [], member, message } = {}) {
+  const actor = member || group.owner;
+  return {
+    customId,
+    values,
+    user: { id: actor.id },
+    member: actor,
+    guild: group.guild,
+    guildId: group.guild.id,
+    message,
+    async update(payload) { this.updated = payload; },
+    async reply(payload) { this.repliedWith = payload; }
+  };
 }
 
 async function run(guild, member, content) {
@@ -605,29 +630,136 @@ test("force management blocks roles and restores forced nicknames without a puni
 
   const cleared = await run(group.guild, group.owner, `-unforcestrip ${TARGET}`);
   assert.equal(titleOf(cleared), "Role Blocks Cleared");
+  const adminRole = makeRole("222000000000000088", "Administrators", [PermissionFlagsBits.Administrator], 20);
+  const watcher = makeMember(group.guild, "111000000000000009", { username: "watcher", roles: [adminRole] });
+  const botAdmin = makeMember(group.guild, "111000000000000010", { username: "botadmin", bot: true, roles: [adminRole] });
   group.guild.fetchAuditLogs = async () => ({
-    entries: new Map([[
-      "role-add",
-      {
+    entries: new Map([
+      ["role-add", {
         id: "role-add",
         targetId: TARGET,
+        executorId: GIVER,
+        executor: { id: GIVER, bot: false, username: "giver" },
         createdTimestamp: Date.now() - (2 * 60 * 60 * 1000),
         changes: [{ key: "$add", new: [{ id: MEMBER_ROLE }] }]
-      }
-    ]])
+      }],
+      ["plain-add", {
+        id: "plain-add",
+        targetId: PLAIN,
+        executor: { id: BOT, bot: true, username: "helper" },
+        createdTimestamp: Date.now() - (3 * 24 * 60 * 60 * 1000),
+        changes: [{ key: "$add", new: [{ id: MEMBER_ROLE }] }]
+      }],
+      ["third-add", {
+        id: "third-add",
+        targetId: THIRD,
+        executor: { bot: false, username: "manual-mod" },
+        createdTimestamp: Date.now() - (10 * 60 * 1000),
+        changes: [{ key: "$add", new: [{ id: MEMBER_ROLE }] }]
+      }]
+    ])
   });
   const stripped = await run(group.guild, group.owner, "-rolestrip Member");
-  assert.match(stripped.replies[0].embeds[0].data.description, /currently taking all members from this role my boy, ill update ya when done/);
-  assert.equal(titleOf(stripped), "Role Stripped");
-  assert.match(textOf(stripped), new RegExp(`<@${TARGET}> — 2 hours`));
-  assert.match(textOf(stripped), new RegExp(`<@${OTHER}> — not in the audit log`));
+  assert.equal(titleOf(stripped), "Role Strip");
+  assert.match(textOf(stripped), /Select who should keep the role/);
+  const [menuRow, buttonRow] = rowsOf(stripped.replies[0]);
+  const menu = menuRow[0];
+  assert.equal(menu.placeholder, "Exempt users");
+  assert.ok(menu.options.some((option) => option.value === TARGET));
+  assert.ok(menu.options.some((option) => option.value === OTHER));
+  const confirmId = buttonRow.find((button) => button.label === "Confirm").custom_id;
+  const stranger = stripInteraction(group, menu.custom_id, { values: [TARGET], member: group.os });
+  assert.equal(await extras.handleInteraction(stranger), true);
+  assert.match(stranger.repliedWith.embeds[0].data.description, /Not Yours/);
+  assert.equal(group.target.roles.cache.has(MEMBER_ROLE), true);
+
+  const exempt = stripInteraction(group, menu.custom_id, { values: [OTHER] });
+  assert.equal(await extras.handleInteraction(exempt), true);
+  assert.match(exempt.updated.embeds[0].data.description, new RegExp(`<@${OTHER}>`));
+  const updatedMenu = rowsOf(exempt.updated)[0][0];
+  assert.equal(updatedMenu.options.find((option) => option.value === OTHER).default, true);
+
+  const result = { async edit(payload) { this.edited = payload; } };
+  const confirm = stripInteraction(group, confirmId, { message: result });
+  assert.equal(await extras.handleInteraction(confirm), true);
+  assert.match(confirm.updated.embeds[0].data.description, /currently taking all members from this role my boy, ill update ya when done/);
+  const summary = result.edited.embeds[0].data.description;
+  assert.match(summary, /Role Stripped/);
+  assert.match(summary, new RegExp(`<@${TARGET}> — 2 hours`));
+  assert.match(summary, new RegExp(`Kept \\*\\*Member\\*\\* on <@${OTHER}>`));
+  assert.doesNotMatch(summary, new RegExp(`<@${OTHER}> —`));
   assert.equal(group.target.roles.cache.has(MEMBER_ROLE), false);
-  assert.equal(group.other.roles.cache.has(MEMBER_ROLE), false);
+  assert.equal(group.other.roles.cache.has(MEMBER_ROLE), true);
+  assert.equal(group.owner.roles.cache.has(MEMBER_ROLE), false);
+
+  const transcript = watcher.dms.map((dm) => dm.embeds[0].data.description).join("\n");
+  assert.equal(watcher.dms.length > 0, true);
+  assert.equal(watcher.dms.every((dm) => dm.content == null && dm.allowedMentions.parse.length === 0), true);
+  assert.match(transcript, /\*\*Member\*\* removed from/);
+  assert.match(transcript, new RegExp(`Stripped by <@${OWNER}>`));
+  assert.match(transcript, new RegExp(`<@${TARGET}>\\nHeld for 2 hours\\nGiven manually by <@${GIVER}>`));
+  assert.match(transcript, new RegExp(`<@${PLAIN}>\\nHeld for 3 days\\nGiven by bot <@${BOT}>`));
+  assert.match(transcript, new RegExp(`<@${THIRD}>\\nHeld for 10 minutes\\nGiven manually by manual-mod`));
+  assert.match(transcript, new RegExp(`Kept on <@${OTHER}>`));
+  assert.doesNotMatch(transcript, new RegExp(`<@${OTHER}>\\nHeld for`));
+  assert.equal(group.owner.dms.length, 0);
+  assert.equal(group.target.dms.length, 0);
+  assert.equal(botAdmin.dms.length, 0);
 
   const again = await run(group.guild, group.owner, `-forcenickname ${TARGET} Beta`);
   assert.equal(titleOf(again), "Please Wait");
   assert.match(textOf(again), /20/);
   assert.equal(group.target.nickname, "Alpha");
+});
+
+test("rolestrip cancel leaves the role, and exemptions survive the next page", async () => {
+  const group = cast();
+  await authorize(group);
+  const emptyId = "222000000000000077";
+  group.guild.roles.cache.set(emptyId, makeRole(emptyId, "Empty", [], 3));
+  const empty = await run(group.guild, group.owner, "-rolestrip Empty");
+  assert.equal(titleOf(empty), "Role Strip");
+  assert.match(textOf(empty), /not on anyone/);
+  assert.equal(empty.replies[0].components, undefined);
+
+  const cancelled = await run(group.guild, group.owner, "-rolestrip Member");
+  const cancelId = rowsOf(cancelled.replies[0])[1].find((button) => button.label === "Cancel").custom_id;
+  const cancel = stripInteraction(group, cancelId);
+  assert.equal(await extras.handleInteraction(cancel), true);
+  assert.match(cancel.updated.embeds[0].data.description, /Nobody lost \*\*Member\*\*/);
+  assert.equal(group.target.roles.cache.has(MEMBER_ROLE), true);
+  assert.equal(group.other.roles.cache.has(MEMBER_ROLE), true);
+
+  const ids = [];
+  for (let index = 0; index < 26; index += 1) {
+    const id = `333000000000000${String(index).padStart(3, "0")}`;
+    makeMember(group.guild, id, { username: `holder${String(index).padStart(2, "0")}`, roles: [memberRole()] });
+    ids.push(id);
+  }
+  const preview = await run(group.guild, group.os, "-rolestrip Member");
+  const [firstMenu, firstButtons] = rowsOf(preview.replies[0]);
+  assert.equal(firstMenu[0].options.length, 25);
+  const firstId = firstMenu[0].options[0].value;
+  const nextId = firstButtons.find((button) => button.label === "Next").custom_id;
+  const picked = stripInteraction(group, firstMenu[0].custom_id, { values: [firstId], member: group.os });
+  assert.equal(await extras.handleInteraction(picked), true);
+  const next = stripInteraction(group, nextId, { member: group.os });
+  assert.equal(await extras.handleInteraction(next), true);
+  const secondMenu = rowsOf(next.updated)[0][0];
+  assert.equal(secondMenu.options.some((option) => option.value === firstId), false);
+  const secondId = secondMenu.options[0].value;
+  const pageTwo = stripInteraction(group, secondMenu.custom_id, { values: [secondId], member: group.os });
+  assert.equal(await extras.handleInteraction(pageTwo), true);
+  assert.match(pageTwo.updated.embeds[0].data.description, new RegExp(`<@${firstId}>`));
+  assert.match(pageTwo.updated.embeds[0].data.description, new RegExp(`<@${secondId}>`));
+  const confirmId = rowsOf(pageTwo.updated)[1].find((button) => button.label === "Confirm").custom_id;
+  const result = { async edit(payload) { this.edited = payload; } };
+  const confirm = stripInteraction(group, confirmId, { member: group.os, message: result });
+  assert.equal(await extras.handleInteraction(confirm), true);
+  assert.equal(group.guild.members.cache.get(firstId).roles.cache.has(MEMBER_ROLE), true);
+  assert.equal(group.guild.members.cache.get(secondId).roles.cache.has(MEMBER_ROLE), true);
+  assert.equal(group.target.roles.cache.has(MEMBER_ROLE), false);
+  assert.match(result.edited.embeds[0].data.description, /Kept \*\*Member\*\*/);
 });
 
 test("unauthorized vouch role changes are reversed and only the human actor is stripstaffed", async () => {
