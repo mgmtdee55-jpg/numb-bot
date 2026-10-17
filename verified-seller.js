@@ -302,6 +302,16 @@ function allowedGiver(guild, member, executor) {
   return access.isServerOwner(member) || access.isGod(member);
 }
 
+async function isBotActor(guild, entry, member, executor) {
+  if (!executor) return false;
+  if (String(executor) === botId(guild)) return true;
+  if (entry?.executor?.bot || member?.user?.bot) return true;
+  const cached = guild.client?.users?.cache?.get?.(String(executor));
+  if (cached?.bot) return true;
+  const fetched = await guild.client?.users?.fetch?.(String(executor)).catch(() => null);
+  return !!fetched?.bot;
+}
+
 async function notifyAdmins(guild, skipId, content) {
   const seen = new Set();
   const members = [];
@@ -320,6 +330,24 @@ async function notifyAdmins(guild, skipId, content) {
     await sendDM(member, content);
     sent += 1;
   }
+}
+
+async function noteBot(guild, entry, action) {
+  const started = Date.now();
+  const removing = action === "remove";
+  const executor = executorId(entry);
+  const target = targetId(entry);
+  const claim = `bot:${guild.id}:${entry.id || `${executor}:${target}`}:${action}`;
+  if (claims.has(claim)) return;
+  claims.add(claim);
+  await notifyAdmins(guild, executor, [
+    `Verified Seller role was ${removing ? "removed" : "given"} by a bot.`,
+    `Who: <@${executor}>`,
+    `To: <@${target}>`,
+    "Punishment: none. Bots are not kicked or removed for this.",
+    "A CEO or the server owner needs to change this role by hand if it should not stay.",
+    `Response time: ${Date.now() - started}ms`
+  ].join("\n"));
 }
 
 async function punish(guild, entry, roleId, action) {
@@ -406,6 +434,18 @@ async function handleAudit(guild, entry) {
     if (change.key === "$remove" || change.key === "remove") removed = true;
   }
   const member = await fetchMember(guild, executor);
+  if (await isBotActor(guild, entry, member, executor)) {
+    const own = String(executor) === botId(guild);
+    if (removed && !added) {
+      statements.remove.run(String(guild.id), String(target));
+      if (!own) await noteBot(guild, entry, "remove");
+      return;
+    }
+    if (!added) return;
+    remember(guild.id, target, executor);
+    if (!own) await noteBot(guild, entry, "add");
+    return;
+  }
   const allowed = allowedGiver(guild, member, executor);
   if (removed && !added) {
     if (allowed) {

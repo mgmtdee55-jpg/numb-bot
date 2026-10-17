@@ -302,6 +302,41 @@ test("an unauthorized role grant kicks the giver and tells administrators", asyn
   assert.deepEqual(guild.kicks, []);
 });
 
+test("another bot that changes the verified seller role is left alone", async () => {
+  const guild = makeGuild();
+  const owner = makeMember(guild, OWNER, { name: "owner" });
+  const admin = makeMember(guild, ADMIN, { name: "admin", admin: true });
+  const stain = makeMember(guild, "111000000000000080", { name: "stain", bot: true });
+  const kisses = makeMember(guild, TARGET, { name: "kisses" });
+  statementsReady(guild, makeMember(guild, SELLER, { name: "seller" }));
+  kisses.roles.cache.set(ROLE, guild.roles.cache.get(ROLE));
+
+  await sellers.handleAudit(guild, {
+    ...entry(stain.id, kisses.id, ROLE),
+    executor: { id: stain.id, bot: true }
+  });
+  assert.deepEqual(guild.kicks, []);
+  assert.equal(kisses.roles.removed, undefined);
+  assert.equal(kisses.roles.cache.has(ROLE), true);
+  assert.equal(sellers.isSeller(kisses), true);
+  assert.equal(stain.user.dms.length, 0);
+  assert.match(admin.user.dms[0], /given by a bot/);
+  assert.match(admin.user.dms[0], /Punishment: none/);
+  assert.match(admin.user.dms[0], new RegExp(`Who: <@${stain.id}>`));
+  assert.match(owner.user.dms[0], /by hand/);
+
+  kisses.roles.cache.delete(ROLE);
+  await sellers.handleAudit(guild, {
+    ...entry(stain.id, kisses.id, ROLE, "$remove"),
+    executor: { id: stain.id, bot: true }
+  });
+  assert.deepEqual(guild.kicks, []);
+  assert.equal(kisses.roles.cache.has(ROLE), false);
+  assert.equal(sellers.isSeller(kisses), false);
+  assert.match(admin.user.dms.at(-1), /removed by a bot/);
+  assert.match(admin.user.dms.at(-1), /Punishment: none/);
+});
+
 test("newcommands lists the latest commands in a few words", async () => {
   const guild = makeGuild();
   const member = makeMember(guild, MEMBER, { name: "member" });
