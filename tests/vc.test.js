@@ -2186,6 +2186,7 @@ test("unanswered Discord creates cannot stack behind the lobby queue", async () 
     },
     pace: {
       operationTimeoutMs: 20,
+      now: () => 0,
       sleep: () => new Promise((resolve) => sleeps.push(resolve))
     },
     createTempChannel: (_guild, member) => {
@@ -2231,6 +2232,56 @@ test("unanswered Discord creates cannot stack behind the lobby queue", async () 
   }
   await done;
   assert.deepEqual(members.map((member) => member.voice.channelId), members.map((member) => `temp-${member.id}`));
+});
+
+test("a Discord create that never returns does not freeze join to create", async () => {
+  const guild = makeGuild("j2c-slot-expire-guild");
+  const member = makeMember(guild, "656565656565656565", { channelId: "j2c" });
+  const hung = [];
+  const created = [];
+  const cleaned = [];
+  let thirdStarted;
+  const third = new Promise((resolve) => {
+    thirdStarted = resolve;
+  });
+  const handler = createVoiceStateHandler({
+    db: {
+      getConfig: () => ({ j2c_channel_id: "j2c", category_id: "category" }),
+      getTempChannel: () => null
+    },
+    pace: { operationTimeoutMs: 30 },
+    createTempChannel: () => {
+      const attempt = created.length + 1;
+      const id = `temp-${attempt}`;
+      created.push(id);
+      if (attempt < 3) {
+        return new Promise((resolve) => hung.push(() => resolve({ id })));
+      }
+      thirdStarted();
+      return { id };
+    },
+    renderVoiceChannelInterface: async () => {},
+    cleanupTempChannel: async (_guild, channelId) => {
+      cleaned.push(String(channelId));
+    }
+  });
+
+  const run = handler(
+    { channelId: null },
+    { guild, id: member.id, member, channelId: "j2c" }
+  );
+  const status = await Promise.race([
+    third.then(() => "created"),
+    new Promise((resolve) => setTimeout(() => resolve("stuck"), 3000))
+  ]);
+  assert.equal(status, "created");
+  await run;
+  assert.equal(member.voice.channelId, "temp-3");
+  hung.forEach((finish) => finish());
+  for (let attempt = 0; attempt < 20 && cleaned.length < 2; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.deepEqual(cleaned.sort(), ["temp-1", "temp-2"]);
 });
 
 test("a retry wait does not block empty-channel cleanup", async () => {

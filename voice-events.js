@@ -230,19 +230,26 @@ function createVoiceStateHandler({
   }
 
   // Two unanswered Discord calls is the cap. A third request would sit behind
-  // them in Discord's queue and, once that queue is stuck, every later retry
-  // makes the wait permanent. The slot stays until that call settles.
+  // them in Discord's queue. A call that never comes back used to keep that
+  // slot forever, and then nobody in the lobby could get a channel. The slot
+  // is dropped after a few timeouts so the next try can go out.
   function takeDiscordSlot(guildId, kind) {
     const slots = slotBucket(guildId, kind);
+    const now = pace.now();
+    const holdMs = pace.operationTimeoutMs * 3;
+    for (const held of slots) {
+      if (now - held.startedAt >= holdMs) slots.delete(held);
+    }
     if (slots.size >= DISCORD_INFLIGHT_LIMIT) {
       const error = new Error("Join to create is waiting for Discord");
       error.code = "J2C_WAITING";
       throw error;
     }
-    const slot = { startedAt: pace.now() };
+    const slot = { startedAt: now };
     slots.add(slot);
     return {
       bind(promise) {
+        slot.startedAt = pace.now();
         Promise.resolve(promise).then(
           () => slots.delete(slot),
           () => slots.delete(slot)
@@ -411,35 +418,41 @@ function createVoiceStateHandler({
       let reservation = null;
       let moved = false;
       const timeoutMs = pace.operationTimeoutMs;
+      const adoptCreatedChannel = (channel, generation) => {
+        if (!channel?.id) return;
+        const current = box.channel;
+        const stale = generation !== box.createGeneration;
+        if (stale && current) {
+          if (!sameId(current.id, channel.id)) cleanupCreated(guild, channel.id).catch(() => null);
+          return;
+        }
+        box.channel = channel;
+        if (current && !sameId(current.id, channel.id)) cleanupCreated(guild, current.id).catch(() => null);
+      };
       try {
         if (!box.channel) {
           reservation = reserveTempCategory(guild, config, member.id);
-          await pacer.acquire(guild.id, "create");
-          const freshCached = guild.members?.cache?.get?.(userId);
-          const fresh = (canMove(freshCached) ? freshCached : null) || member;
-          if (!stillInJoin(guild, userId, config.j2c_channel_id, box)) throw leftJoinChannel();
           const slot = takeDiscordSlot(guild.id, "create");
           let creating;
           let keepCreate = false;
+          const generation = (box.createGeneration || 0) + 1;
+          box.createGeneration = generation;
           try {
+            await pacer.acquire(guild.id, "create");
+            const freshCached = guild.members?.cache?.get?.(userId);
+            const fresh = (canMove(freshCached) ? freshCached : null) || member;
+            if (!stillInJoin(guild, userId, config.j2c_channel_id, box)) throw leftJoinChannel();
             creating = createTempChannel(guild, fresh, {
               ...config,
               category_id: reservation.categoryId
             });
             slot.bind(creating);
-            box.channel = await withTimeout(creating, timeoutMs);
+            adoptCreatedChannel(await withTimeout(creating, timeoutMs), generation);
           } catch (error) {
             if (error?.code === "J2C_TIMEOUT" && creating) {
               keepCreate = true;
               Promise.resolve(creating).then((channel) => {
-                if (!channel) return;
-                if (!box.channel) {
-                  box.channel = channel;
-                  return;
-                }
-                if (!sameId(box.channel.id, channel.id)) {
-                  cleanupCreated(guild, channel.id).catch(() => null);
-                }
+                adoptCreatedChannel(channel, generation);
               }).catch(() => null);
             }
             throw error;
@@ -447,18 +460,19 @@ function createVoiceStateHandler({
             if (!keepCreate) slot.release();
           }
         }
-        await pacer.acquire(guild.id, "move");
-        if (!stillInJoin(guild, userId, config.j2c_channel_id, box)) throw leftJoinChannel();
         const moveSlot = takeDiscordSlot(guild.id, "move");
         let keepMove = false;
         try {
+          await pacer.acquire(guild.id, "move");
+          if (!stillInJoin(guild, userId, config.j2c_channel_id, box)) throw leftJoinChannel();
           const mover = typeof box.voiceState?.setChannel === "function" ? box.voiceState : voiceStateFor(guild, userId);
           const reason = "VoiceMaster: created temporary voice channel";
+          const targetId = box.channel.id;
           const moving = typeof mover?.setChannel === "function"
-            ? mover.setChannel(box.channel.id, reason)
+            ? mover.setChannel(targetId, reason)
             : typeof member.voice?.setChannel === "function"
-              ? member.voice.setChannel(box.channel.id, reason)
-              : guild.members.edit(userId, { channel: box.channel.id, reason });
+              ? member.voice.setChannel(targetId, reason)
+              : guild.members.edit(userId, { channel: targetId, reason });
           moveSlot.bind(moving);
           await withTimeout(moving, timeoutMs);
           moved = true;
