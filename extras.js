@@ -105,6 +105,7 @@ async function refuseMenu(interaction) {
 
 async function handleInteraction(interaction) {
   const id = interaction.customId || "";
+  if (id.startsWith("spanter:mkick:")) return require("./mkick").handleInteraction(interaction);
   if (id.startsWith("spanter:usage:")) return require("./usage").handleInteraction(interaction);
   if (id.startsWith("spanter:roles:")) return require("./role-list").handleInteraction(interaction);
   if (id.startsWith("spanter:rolestrip:")) return require("./vouch/force").handleStripInteraction(interaction);

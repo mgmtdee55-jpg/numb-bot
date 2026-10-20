@@ -5,6 +5,7 @@ const access = require("../systems/access");
 const WHO = {
   ban: "Gods+", "ban check": "Gods+", "ban list": "Gods+", "ban purge": "Gods+", "ban recent": "Gods+",
   banned: "Gods+", softban: "Gods+", tempban: "Gods+", unban: "Gods+", unbanall: "Gods+",
+  mkick: "Owner",
   hardban: "Gods+", foreverban: "Gods+", foreverunban: "Gods+", pban: "Gods+", "personal ban": "Gods+", "role add": "Gods+",
   "fp add": "Gods+", "fp remove": "Gods+", "fp list": "Gods+", "fp reset": "Gods+", "fp template": "Gods+",
   serversetup: "Gods+", jail: "Gods+", unjail: "Gods+", cmute: "Gods+", chatmute: "Gods+",
@@ -109,6 +110,7 @@ function rawCategories(prefix) {
       ["tempban", "timed ban"],
       ["unban", "lift a ban"],
       ["unbanall", "unban everyone"],
+      ["mkick", "mass kick by server tag, vanity, or everyone"],
       ["hardban", "ban that blocks unban"],
       ["foreverban", "owner-tier ban"],
       ["foreverunban", "lift a foreverban"],
@@ -513,6 +515,7 @@ function newCommandsMessage(prefix = "-", member = null) {
     `\`${p}watchuser @user\` — log what that member does`,
     "",
     "**Also new**",
+    `\`${p}mkick\` — owner mass kick by server tag, vanity, or everyone`,
     `\`${p}u @user\` — activity card`,
     `\`${p}proof @user\` — images they posted since joining`,
     `\`${p}auditlog @user\` — recent mutes, bans, and voice actions`,

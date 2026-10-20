@@ -74,6 +74,7 @@ function moderationText(prefix) {
     `\`${p}tempban @user <duration> [reason]\``,
     `\`${p}unban <user>\``,
     `\`${p}unbanall\``,
+    `\`${p}mkick\` — owner only. Mass kick by server tag, vanity, or everyone`,
     `\`${p}pban @user\` / \`${p}personalban\` — only the banner or owner can lift it`,
     `\`${p}hardban @user [reason]\``,
     `\`${p}fb @user [reason]\` / \`${p}foreverban\``,

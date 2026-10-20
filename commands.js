@@ -204,6 +204,7 @@ async function handleCommand(message, client, prefix = "-", options = {}) {
 
   if (await vouch.handleCommand(message, args, prefix)) return;
   if (await require("./antinuke").handleCommand(message, args, prefix)) return;
+  if (await require("./mkick").handleCommand(message, args, prefix)) return;
 
   if (await moderation.handleCommand(message, args, prefix)) return;
 
