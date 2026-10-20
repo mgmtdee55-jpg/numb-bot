@@ -1,8 +1,12 @@
 const { withChannelLock } = require("./channel-lock");
 const {
   reserveTempCategory: reserveConfiguredTempCategory,
+  noteOwnerDeparture,
+  noteOwnerArrival,
+  ownerReleaseUser,
+  adoptOwnedChannel,
   ownerStillPresent,
-  scheduleOwnerRelease,
+  isChannelMember,
   cancelOwnerRelease,
   isRateLimitError,
   releaseChannelForMove
@@ -402,9 +406,19 @@ function createVoiceStateHandler({
     }
   }
 
-  function finishOwnership(channel, ownerId) {
-    if (typeof db.forceOwner === "function") db.forceOwner(channel.id, ownerId);
-    cancelOwnerRelease(channel.id, ownerId);
+  async function finishOwnership(guild, channel, ownerId, previousChannelId = null) {
+    await adoptOwnedChannel(guild || channel.guild, channel, ownerId, previousChannelId);
+    if (!previousChannelId || sameId(previousChannelId, channel?.id)) return;
+    const row = typeof db.getTempChannel === "function" ? db.getTempChannel(previousChannelId) : null;
+    if (!row || !sameId(row.owner_id, ownerId)) return;
+    if (
+      await ownerStillPresent(guild, previousChannelId, ownerId) ||
+      isChannelMember(guild, previousChannelId, ownerId)
+    ) {
+      return;
+    }
+    cancelOwnerRelease(previousChannelId, ownerId);
+    if (typeof db.clearOwner === "function") db.clearOwner(previousChannelId, ownerId);
   }
 
   async function openCall(guild, config, userId, box) {
@@ -506,7 +520,7 @@ function createVoiceStateHandler({
         box.member = actor;
         if (box.channel && sameId(voiceStateFor(guild, userId)?.channelId || actor.voice?.channelId, box.channel.id)) {
           releaseChannelForMove(box.channel.id);
-          finishOwnership(box.channel, actor.id);
+          await finishOwnership(guild, box.channel, actor.id, box.fromChannelId);
           await renderInterface(box.channel, actor.id);
           return { temp: box.channel, ownerId: actor.id };
         }
@@ -521,7 +535,10 @@ function createVoiceStateHandler({
               require("./pool").moveFromLobby(guild, actor, config.j2c_channel_id, box.voiceState),
               8000
             );
-            if (pooled?.channel) return { temp: pooled.channel, ownerId: actor.id };
+            if (pooled?.channel) {
+              await finishOwnership(guild, pooled.channel, actor.id, box.fromChannelId);
+              return { temp: pooled.channel, ownerId: actor.id };
+            }
           } catch (poolError) {
             if (poolError?.code !== "J2C_TIMEOUT") {
               logThrottledError(`j2c-pool:${guild.id}`, `[J2C pool] ${guild.id}:${userId}`, poolError);
@@ -539,7 +556,7 @@ function createVoiceStateHandler({
           continue;
         }
         releaseChannelForMove(channel.id);
-        finishOwnership(channel, actor.id);
+        await finishOwnership(guild, channel, actor.id, box.fromChannelId);
         await renderInterface(channel, actor.id);
         return { temp: channel, ownerId: actor.id };
       } catch (error) {
@@ -629,8 +646,14 @@ function createVoiceStateHandler({
       if (!config) return;
 
       const joinedMemberId = newState.member?.id || newState.id;
-      if (newState.channelId && joinedMemberId) {
-        cancelOwnerRelease(newState.channelId, joinedMemberId);
+      if (newState.channelId && joinedMemberId && !sameId(oldState.channelId, newState.channelId)) {
+        const joinedRow = db.getTempChannel(newState.channelId);
+        const releaseUser = ownerReleaseUser(newState.channelId);
+        if (joinedRow && (sameId(joinedRow.owner_id, joinedMemberId) || sameId(releaseUser, joinedMemberId))) {
+          await withChannelLock(newState.channelId, async () => {
+            await noteOwnerArrival(guild, newState.channelId, joinedMemberId);
+          });
+        }
       }
 
       const joinedJoinToCreate =
@@ -655,7 +678,7 @@ function createVoiceStateHandler({
         })
         : null;
 
-      if (oldState.channelId && oldState.channelId !== newState.channelId) {
+      if (oldState.channelId && !sameId(oldState.channelId, newState.channelId)) {
         try {
           const managedBeforeLock = db.getTempChannel(oldState.channelId);
           if (managedBeforeLock) {
@@ -664,21 +687,10 @@ function createVoiceStateHandler({
               if (!managed) return;
               const memberId = oldState.member?.id || oldState.id;
               if (!memberId || String(managed.owner_id) !== String(memberId)) return;
-              if (await ownerStillPresent(guild, oldState.channelId, memberId)) {
-                cancelOwnerRelease(oldState.channelId, memberId);
-                return;
-              }
-              if (newState.channelId) {
-                cancelOwnerRelease(oldState.channelId, memberId);
-                db.clearOwner(oldState.channelId, memberId);
-                return;
-              }
-              scheduleOwnerRelease(oldState.channelId, memberId, () => withChannelLock(oldState.channelId, async () => {
-                const current = db.getTempChannel(oldState.channelId);
-                if (!current || String(current.owner_id) !== String(memberId)) return;
-                if (await ownerStillPresent(guild, oldState.channelId, memberId)) return;
-                db.clearOwner(oldState.channelId, memberId);
-              }));
+              // Channel changes and brief disconnects are not proof the owner left.
+              // Keep the saved owner until a live voice-state check says they are
+              // still gone after the rejoin window, or they open a new temporary VC.
+              await noteOwnerDeparture(guild, oldState.channelId, memberId);
             });
             if (cleanupTempChannel) await cleanupTempChannel(guild, oldState.channelId);
             else await cleanupEmptyTempChannels(guild);

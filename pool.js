@@ -670,7 +670,7 @@ async function showInterface(channel, ownerId) {
   }
 }
 
-function rememberTemp(guild, channel, member) {
+async function rememberTemp(guild, channel, member) {
   db.addTemp({
     channel_id: channel.id,
     guild_id: guild.id,
@@ -678,7 +678,7 @@ function rememberTemp(guild, channel, member) {
     interface_message_id: null,
     created_at: Date.now()
   });
-  if (typeof db.forceOwner === "function") db.forceOwner(channel.id, member.id);
+  await voice.adoptOwnedChannel(guild, channel, member.id);
 }
 
 function seenChannel(member, voiceState) {
@@ -741,14 +741,14 @@ async function claimFor(guild, member, channel, { moveFrom = null, voiceState = 
         if (occupantCount(channel) === 0) db.releasePoolClaim(channel.id, member.id);
         return null;
       }
-      rememberTemp(guild, channel, member);
+      await rememberTemp(guild, channel, member);
       await showInterface(channel, member.id);
       scheduleRefill(guild);
       return channel;
     } catch (error) {
       if (landedIn(member, channel.id, voiceState) && !leftDuringMove(error)) {
         logThrottledError(`pool-claim:${guild.id}`, `[pool claim] ${guild.id}:${channel.id}`, error);
-        if (!db.getTempChannel(channel.id)) rememberTemp(guild, channel, member);
+        if (!db.getTempChannel(channel.id)) await rememberTemp(guild, channel, member);
         await showInterface(channel, member.id);
         scheduleRefill(guild);
         return channel;

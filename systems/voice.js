@@ -66,6 +66,7 @@ async function takeOwnership(message, claimed) {
   if (!db.forceOwner(channel.id, message.author.id)) {
     return reply(message, "Unable to Claim", "That channel is no longer managed.");
   }
+  require("../voice").cancelOwnerRelease(channel.id);
   return reply(message, claimed ? "Channel Force Claimed" : "Ownership Forced", `You now own <#${channel.id}>. The previous owner stays in the channel.`);
 }
 

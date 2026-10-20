@@ -1395,6 +1395,244 @@ test("an owner who has really left is cleared once Discord confirms it", async (
   assert.equal(db.getTempChannel(channel.id).owner_id, null);
 });
 
+function tempConfig(guild, prefix) {
+  db.setConfig({
+    guild_id: guild.id,
+    j2c_channel_id: `${prefix}-j2c`,
+    category_id: `${prefix}-category`,
+    server_interface_channel_id: "disabled",
+    server_interface_message_id: null,
+    name_template: "{nickname}'s VC",
+    user_limit: 0,
+    bitrate: 64000,
+    cleanup_seconds: 300,
+    server_interface_enabled: 0
+  });
+}
+
+function quietHandler() {
+  return createVoiceStateHandler({
+    db,
+    createTempChannel: async () => ({ id: "unused" }),
+    renderVoiceChannelInterface: async () => {},
+    cleanupEmptyTempChannels: async () => {},
+    cleanupTempChannel: async () => {}
+  });
+}
+
+function replyText(message) {
+  return message.replies.at(-1)?.embeds?.[0]?.data?.description || "";
+}
+
+test("ownership stays for five minutes and is not claimable while the owner is still inside", async () => {
+  clearActionCooldowns();
+  assert.equal(voice.OWNER_RELEASE_GRACE_MS, 300000);
+  const guild = makeGuild("owner-hold-guild");
+  const owner = makeMember(guild, "292929292929292929");
+  const other = makeMember(guild, "292929292929292930");
+  const unrelatedOwner = makeMember(guild, "292929292929292931");
+  const channel = makeVoiceChannel(guild, "owner-hold-channel", [owner, other]);
+  const unrelated = makeVoiceChannel(guild, "owner-hold-unrelated", [unrelatedOwner]);
+  tempConfig(guild, "owner-hold");
+  db.addTemp({
+    channel_id: channel.id,
+    guild_id: guild.id,
+    owner_id: owner.id,
+    interface_message_id: null,
+    created_at: Date.now()
+  });
+  db.addTemp({
+    channel_id: unrelated.id,
+    guild_id: guild.id,
+    owner_id: unrelatedOwner.id,
+    interface_message_id: null,
+    created_at: Date.now()
+  });
+  const handler = quietHandler(guild);
+
+  await handler(
+    { channelId: channel.id, id: owner.id, member: owner },
+    { guild, id: owner.id, member: owner, channelId: "ghost-channel" }
+  );
+  assert.equal(db.getTempChannel(channel.id).owner_id, owner.id);
+  const blocked = makeMessage(guild, "-vc claim", other, other);
+  await handleCommand(blocked, null, "-");
+  assert.match(replyText(blocked), /Only the current owner can use this control/);
+  assert.equal(db.getTempChannel(channel.id).owner_id, owner.id);
+  assert.equal(unrelated.deleted, false);
+
+  owner.voice.channel = null;
+  owner.voice.channelId = null;
+  channel.members.delete(owner.id);
+  const leftAt = Date.now();
+  await handler(
+    { channelId: channel.id, id: owner.id, member: owner },
+    { guild, id: owner.id, member: owner, channelId: null }
+  );
+  assert.equal(db.getTempChannel(channel.id).owner_id, owner.id);
+  const releaseAt = db.getTempChannel(channel.id).owner_release_at;
+  assert.ok(releaseAt >= leftAt + 299000 && releaseAt <= leftAt + 301000);
+
+  const firstClaim = makeMessage(guild, "-vc claim", other, other);
+  await handleCommand(firstClaim, null, "-");
+  const firstText = replyText(firstClaim);
+  assert.match(firstText, /This VC is temporarily reserved for its owner\. You can claim it in \d+ seconds\./);
+  const firstSeconds = Number(firstText.match(/in (\d+) seconds/)[1]);
+  assert.ok(firstSeconds >= 298 && firstSeconds <= 300);
+  assert.equal(db.getTempChannel(channel.id).owner_id, owner.id);
+
+  const secondClaim = makeMessage(guild, "-vc claim", other, other);
+  await handleCommand(secondClaim, null, "-");
+  const secondSeconds = Number(replyText(secondClaim).match(/in (\d+) seconds/)[1]);
+  const liveSeconds = voice.reservationSeconds(channel.id, db.getTempChannel(channel.id));
+  assert.ok(Math.abs(secondSeconds - liveSeconds) <= 1);
+  assert.ok(secondSeconds <= firstSeconds);
+
+  await handler(
+    { channelId: channel.id, id: owner.id, member: owner },
+    { guild, id: owner.id, member: owner, channelId: null }
+  );
+  assert.equal(db.getTempChannel(channel.id).owner_release_at, releaseAt);
+
+  owner.voice.channel = channel;
+  owner.voice.channelId = channel.id;
+  channel.members.set(owner.id, owner);
+  await handler(
+    { channelId: null, id: owner.id, member: owner },
+    { guild, id: owner.id, member: owner, channelId: channel.id }
+  );
+  clearActionCooldowns();
+  const returned = makeMessage(guild, "-vc claim", other, other);
+  await handleCommand(returned, null, "-");
+  assert.match(replyText(returned), /Only the current owner can use this control/);
+  assert.equal(db.getTempChannel(channel.id).owner_release_at, null);
+  await voice.flushOwnerReleases(channel.id);
+  assert.equal(db.getTempChannel(channel.id).owner_id, owner.id);
+  assert.equal(db.getTempChannel(unrelated.id).owner_id, unrelatedOwner.id);
+});
+
+test("a leave and a rejoin cannot drop the owner when their voice state arrives late", async () => {
+  clearActionCooldowns();
+  const guild = makeGuild("owner-race-guild");
+  const owner = makeMember(guild, "303030303030303031");
+  const other = makeMember(guild, "303030303030303032");
+  const channel = makeVoiceChannel(guild, "owner-race-channel", [owner, other]);
+  tempConfig(guild, "owner-race");
+  db.addTemp({
+    channel_id: channel.id,
+    guild_id: guild.id,
+    owner_id: owner.id,
+    interface_message_id: null,
+    created_at: Date.now()
+  });
+  let releaseFetch;
+  const fetchStarted = new Promise((resolve) => {
+    guild.voiceStates.fetch = (userId) => new Promise((done, fail) => {
+      if (userId !== owner.id) {
+        done({ id: userId, channelId: channel.id });
+        return;
+      }
+      releaseFetch = () => {
+        const error = new Error("Unknown Voice State");
+        error.code = 10065;
+        fail(error);
+      };
+      resolve();
+    });
+  });
+  const handler = quietHandler(guild);
+  owner.voice.channel = null;
+  owner.voice.channelId = null;
+  channel.members.delete(owner.id);
+  const leave = handler(
+    { channelId: channel.id, id: owner.id, member: owner },
+    { guild, id: owner.id, member: owner, channelId: "other-room" }
+  );
+  await fetchStarted;
+  owner.voice.channel = channel;
+  owner.voice.channelId = channel.id;
+  channel.members.set(owner.id, owner);
+  guild.voiceStates.cache.set(owner.id, { id: owner.id, channelId: channel.id, member: owner });
+  const rejoin = handler(
+    { channelId: "other-room", id: owner.id, member: owner },
+    { guild, id: owner.id, member: owner, channelId: channel.id }
+  );
+  releaseFetch();
+  await Promise.all([leave, rejoin]);
+  await voice.flushOwnerReleases(channel.id);
+  await voice.reconcileGuild(guild);
+  assert.equal(db.getTempChannel(channel.id).owner_id, owner.id);
+  assert.equal(channel.deleted, false);
+
+  const claim = makeInteraction(guild, "vc_claim", { userId: other.id });
+  await controls.handleButton(claim);
+  assert.equal(db.getTempChannel(channel.id).owner_id, owner.id);
+  assert.match(claim.updates.at(-1).embeds[0].data.description, /Only the current channel owner can use this control|temporarily reserved/);
+});
+
+test("claim tells the remaining seconds and the saved reservation survives a restart", async () => {
+  clearActionCooldowns();
+  const guild = makeGuild("owner-grace-guild");
+  const owner = makeMember(guild, "313131313131313132");
+  const other = makeMember(guild, "313131313131313133");
+  const channel = makeVoiceChannel(guild, "owner-grace-channel", [owner, other]);
+  tempConfig(guild, "owner-grace");
+  db.addTemp({
+    channel_id: channel.id,
+    guild_id: guild.id,
+    owner_id: owner.id,
+    interface_message_id: null,
+    created_at: Date.now()
+  });
+  owner.voice.channel = null;
+  owner.voice.channelId = null;
+  channel.members.delete(owner.id);
+  guild.voiceStates.cache.set(other.id, { id: other.id, channelId: channel.id });
+  const deadline = Date.now() + 187000;
+  db.setOwnerRelease(channel.id, deadline);
+  await voice.reconcileGuild(guild);
+  assert.equal(db.getTempChannel(channel.id).owner_id, owner.id);
+
+  const claim = makeMessage(guild, "-vc claim", other, other);
+  await handleCommand(claim, null, "-");
+  const reported = Number(replyText(claim).match(/in (\d+) seconds/)[1]);
+  const expected = Math.max(1, Math.ceil((deadline - Date.now()) / 1000));
+  assert.ok(Math.abs(reported - expected) <= 1);
+  assert.match(replyText(claim), /This VC is temporarily reserved for its owner\. You can claim it in \d+ seconds\./);
+
+  const sooner = Date.now() + 42000;
+  voice.cancelOwnerRelease(channel.id);
+  db.setOwnerRelease(channel.id, sooner);
+  await voice.reconcileGuild(guild);
+  const updated = makeMessage(guild, "-vc claim", other, other);
+  await handleCommand(updated, null, "-");
+  const updatedSeconds = Number(replyText(updated).match(/in (\d+) seconds/)[1]);
+  assert.ok(updatedSeconds >= 40 && updatedSeconds <= 42);
+  assert.equal(db.getTempChannel(channel.id).owner_id, owner.id);
+
+  owner.voice.channel = channel;
+  owner.voice.channelId = channel.id;
+  channel.members.set(owner.id, owner);
+  await voice.reconcileGuild(guild);
+  assert.equal(db.getTempChannel(channel.id).owner_id, owner.id);
+  assert.equal(db.getTempChannel(channel.id).owner_release_at, null);
+
+  owner.voice.channel = null;
+  owner.voice.channelId = null;
+  channel.members.delete(owner.id);
+  db.setOwnerRelease(channel.id, Date.now() - 1000);
+  guild.voiceStates.fetch = async () => {
+    throw Object.assign(new Error("Unknown Voice State"), { code: 10065 });
+  };
+  await voice.flushOwnerReleases(channel.id);
+  await voice.reconcileGuild(guild);
+  assert.equal(db.getTempChannel(channel.id).owner_id, null);
+  clearActionCooldowns();
+  const open = makeMessage(guild, "-vc claim", other, other);
+  await handleCommand(open, null, "-");
+  assert.equal(db.getTempChannel(channel.id).owner_id, other.id);
+});
+
 test("voice-state duplicate and in-flight-leave cases are serialized", async () => {
   let creates = 0;
   let cleanups = 0;

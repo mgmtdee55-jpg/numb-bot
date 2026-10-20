@@ -9,7 +9,7 @@ const {
 } = require("discord.js");
 const db = require("./db");
 const { withChannelLock } = require("./channel-lock");
-const { renderVoiceChannelInterface } = require("./voice");
+const { renderVoiceChannelInterface, assessClaim, reservationMessage, cancelOwnerRelease } = require("./voice");
 const { consumeActionCooldown } = require("./action-cooldowns");
 const access = require("./systems/access");
 const { logThrottledError } = require("./log-throttle");
@@ -99,17 +99,22 @@ function userMenu(customId, placeholder) {
   );
 }
 
-async function claimChannel(interaction, channel, row) {
-  const claimed = await withChannelLock(channel.id, async () => {
-    const current = db.getTempChannel(channel.id);
-    if (!current) return "missing";
-    const member = channel.guild.members.cache.get(interaction.user.id);
-    if (member?.voice?.channelId !== undefined && member.voice.channelId !== channel.id) return "not-in-channel";
-    if (member?.voice?.channelId === undefined && !channel.members.has(interaction.user.id)) return "not-in-channel";
-    if (current.owner_id) return current.owner_id === interaction.user.id ? "already-owner" : "owned";
-    return db.setOwner(channel.id, interaction.user.id) ? "claimed" : "owned";
+async function decideClaim(channel, userId) {
+  return withChannelLock(channel.id, async () => {
+    const decision = await assessClaim(channel.guild, channel, userId);
+    if (decision.status !== "open") return decision;
+    if (!db.setOwner(channel.id, userId)) return { status: "owned" };
+    cancelOwnerRelease(channel.id);
+    return { status: "claimed" };
   });
-  if (claimed === "owned") {
+}
+
+async function claimChannel(interaction, channel, row) {
+  const decision = await decideClaim(channel, interaction.user.id);
+  const claimed = decision.status;
+  if (claimed === "reserved") {
+    await interaction.editReply(privateResult("Temporarily Reserved", reservationMessage(decision.seconds)));
+  } else if (claimed === "owned") {
     await interaction.editReply(privateResult("Owner Only", "Only the current channel owner can use this control."));
   } else if (claimed === "already-owner") {
     await interaction.editReply(privateResult("Already Owner", "You already own this voice channel."));
@@ -162,6 +167,10 @@ async function handleButton(interaction) {
     if (!channel) return interaction.editReply(privateResult("Join a Voice Channel", "You must be inside the channel you want to claim."));
     const row = db.getTempChannel(channel.id);
     if (!row) return interaction.editReply(privateResult("Not Managed", "This is not a managed temporary voice channel."));
+    const reservation = await withChannelLock(channel.id, () => assessClaim(interaction.guild, channel, interaction.user.id));
+    if (reservation.status === "reserved") {
+      return interaction.editReply(privateResult("Temporarily Reserved", reservationMessage(reservation.seconds)));
+    }
     const cooldownReply = await actionCooldownReply(interaction, channel, "claim");
     if (cooldownReply) return cooldownReply;
     return claimChannel(interaction, channel, row);
@@ -321,15 +330,15 @@ async function runTextAction(message, action) {
   const row = channel ? db.getTempChannel(channel.id) : null;
   if (action === "claim") {
     if (!channel || !row) return message.reply(result("Not Managed", "Join a managed temporary voice channel to claim it."));
+    const reservation = await withChannelLock(channel.id, () => assessClaim(message.guild, channel, message.author.id));
+    if (reservation.status === "reserved") {
+      return message.reply(result("Temporarily Reserved", reservationMessage(reservation.seconds)));
+    }
     const cooldownReply = await actionCooldownReply(message, channel, "claim");
     if (cooldownReply) return cooldownReply;
-    const claimed = await withChannelLock(channel.id, async () => {
-      const current = db.getTempChannel(channel.id);
-      if (!current) return "missing";
-      if (message.member?.voice?.channelId !== channel.id) return "not-in-channel";
-      if (current.owner_id) return current.owner_id === message.author.id ? "already-owner" : "owned";
-      return db.setOwner(channel.id, message.author.id) ? "claimed" : "owned";
-    });
+    const decision = await decideClaim(channel, message.author.id);
+    const claimed = decision.status;
+    if (claimed === "reserved") return message.reply(result("Temporarily Reserved", reservationMessage(decision.seconds)));
     if (claimed === "not-in-channel") return message.reply(result("Join a Voice Channel", "You must still be inside the channel you want to claim."));
     if (claimed === "already-owner" || claimed === "owned") {
       const description = claimed === "already-owner"
@@ -419,7 +428,9 @@ async function transferOwnership(message, target) {
     const current = db.getTempChannel(channel.id);
     if (!current || current.owner_id !== message.author.id) return "not-owner";
     if (target.voice?.channelId !== channel.id && !channel.members?.has?.(target.id)) return "not-in-channel";
-    return db.transferOwner(channel.id, message.author.id, target.id) ? "transferred" : "failed";
+    const transferred = db.transferOwner(channel.id, message.author.id, target.id) ? "transferred" : "failed";
+    if (transferred === "transferred") cancelOwnerRelease(channel.id);
+    return transferred;
   });
   if (transferred === "not-in-channel") {
     return message.reply(result("Not In Channel", "That member needs to be in your voice channel."));

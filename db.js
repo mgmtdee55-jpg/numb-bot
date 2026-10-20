@@ -72,6 +72,7 @@ addColumnIfMissing("guild_config", "category_ids", "TEXT NOT NULL DEFAULT '[]'")
 addColumnIfMissing("temp_channels", "empty_since", "INTEGER");
 addColumnIfMissing("temp_channels", "deleted_at", "INTEGER");
 addColumnIfMissing("temp_channels", "creator_id", "TEXT");
+addColumnIfMissing("temp_channels", "owner_release_at", "INTEGER");
 db.exec("UPDATE temp_channels SET creator_id = owner_id WHERE creator_id IS NULL");
 
 db.exec(`
@@ -242,30 +243,36 @@ module.exports = {
   },
   setOwner(channelId, ownerId) {
     const result = db.prepare(`
-      UPDATE temp_channels SET owner_id = ?
+      UPDATE temp_channels SET owner_id = ?, owner_release_at = NULL
       WHERE channel_id = ? AND deleted_at IS NULL AND owner_id IS NULL
     `).run(ownerId, channelId);
     return result.changes > 0;
   },
   forceOwner(channelId, ownerId) {
     const result = db.prepare(`
-      UPDATE temp_channels SET owner_id = ?
+      UPDATE temp_channels SET owner_id = ?, owner_release_at = NULL
       WHERE channel_id = ? AND deleted_at IS NULL
     `).run(ownerId, channelId);
     return result.changes > 0;
   },
   transferOwner(channelId, fromId, toId) {
     const result = db.prepare(`
-      UPDATE temp_channels SET owner_id = ?
+      UPDATE temp_channels SET owner_id = ?, owner_release_at = NULL
       WHERE channel_id = ? AND owner_id = ? AND deleted_at IS NULL
     `).run(toId, channelId, fromId);
     return result.changes > 0;
   },
   clearOwner(channelId, ownerId) {
     return db.prepare(`
-      UPDATE temp_channels SET owner_id = NULL
+      UPDATE temp_channels SET owner_id = NULL, owner_release_at = NULL
       WHERE channel_id = ? AND owner_id = ? AND deleted_at IS NULL
     `).run(channelId, ownerId).changes > 0;
+  },
+  setOwnerRelease(channelId, expiresAt) {
+    db.prepare(`
+      UPDATE temp_channels SET owner_release_at = ?
+      WHERE channel_id = ? AND deleted_at IS NULL
+    `).run(expiresAt, channelId);
   },
   setEmptySince(channelId, timestamp) {
     db.prepare("UPDATE temp_channels SET empty_since = ? WHERE channel_id = ? AND deleted_at IS NULL").run(timestamp, channelId);

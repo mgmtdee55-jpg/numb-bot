@@ -22,7 +22,7 @@ const DEFAULT_CATEGORY_OVERFLOW_THRESHOLD = 99;
 const MAX_TEMP_CATEGORIES = 3;
 const DISCORD_CATEGORY_CHANNEL_CAP = 50;
 const CATEGORY_RESERVATION_TTL_MS = 10000;
-const OWNER_RELEASE_GRACE_MS = 5000;
+const OWNER_RELEASE_GRACE_MS = 5 * 60 * 1000;
 const pendingOwnerReleases = new Map();
 const channelsAwaitingMove = new Set();
 const VC_INTERFACE_ICONS = {
@@ -63,7 +63,8 @@ function isChannelMember(guild, channelId, userId) {
 }
 
 function ownerReleasePending(channelId) {
-  return pendingOwnerReleases.has(String(channelId));
+  const entry = pendingOwnerReleases.get(String(channelId));
+  return !!entry && !entry.cancelled;
 }
 
 function cancelOwnerRelease(channelId, userId) {
@@ -71,29 +72,34 @@ function cancelOwnerRelease(channelId, userId) {
   const entry = pendingOwnerReleases.get(key);
   if (!entry) return false;
   if (userId != null && String(entry.userId) !== String(userId)) return false;
+  entry.cancelled = true;
   clearTimeout(entry.timer);
   pendingOwnerReleases.delete(key);
   return true;
 }
 
-function scheduleOwnerRelease(channelId, userId, callback) {
+function scheduleOwnerRelease(channelId, userId, callback, delayMs = OWNER_RELEASE_GRACE_MS, expiresAt = Date.now() + delayMs) {
   const key = String(channelId);
   cancelOwnerRelease(key);
-  let ran = false;
+  let started = false;
   const entry = {
     userId: String(userId),
+    expiresAt,
+    cancelled: false,
     timer: null,
     run: () => {
-      if (ran) return null;
-      ran = true;
+      if (started || entry.cancelled) return null;
+      if (pendingOwnerReleases.get(key) !== entry) return null;
+      started = true;
       clearTimeout(entry.timer);
-      if (pendingOwnerReleases.get(key) === entry) pendingOwnerReleases.delete(key);
-      return callback();
+      return callback(entry);
     }
   };
   entry.timer = setTimeout(() => {
-    entry.run();
-  }, OWNER_RELEASE_GRACE_MS);
+    Promise.resolve(entry.run()).catch((error) => {
+      logThrottledError(`owner-release:${key}`, `[owner release] ${key}`, error);
+    });
+  }, Math.max(0, delayMs));
   entry.timer.unref?.();
   pendingOwnerReleases.set(key, entry);
   return entry;
@@ -103,11 +109,253 @@ async function flushOwnerReleases(channelId) {
   const entries = channelId == null
     ? [...pendingOwnerReleases.entries()]
     : [[String(channelId), pendingOwnerReleases.get(String(channelId))]].filter(([, entry]) => entry);
-  for (const [key, entry] of entries) {
-    pendingOwnerReleases.delete(key);
+  for (const [, entry] of entries) {
     clearTimeout(entry.timer);
     await entry.run();
   }
+}
+
+function clearStoredRelease(channelId) {
+  if (typeof db.setOwnerRelease !== "function") return;
+  db.setOwnerRelease(channelId, null);
+}
+
+function storeOwnerRelease(channelId, expiresAt) {
+  if (typeof db.setOwnerRelease !== "function") return;
+  db.setOwnerRelease(channelId, expiresAt);
+}
+
+function reservationDeadline(channelId, row = null) {
+  const entry = pendingOwnerReleases.get(String(channelId));
+  const memory = entry && !entry.cancelled ? Number(entry.expiresAt) || 0 : 0;
+  const stored = Number(row?.owner_release_at) || 0;
+  return Math.max(memory, stored);
+}
+
+function reservationSeconds(channelId, row = null) {
+  const deadline = reservationDeadline(channelId, row);
+  if (!deadline || deadline <= Date.now()) return 0;
+  return Math.max(1, Math.ceil((deadline - Date.now()) / 1000));
+}
+
+function reservationMessage(seconds) {
+  const remaining = Math.max(1, Math.ceil(Number(seconds) || 0));
+  return `This VC is temporarily reserved for its owner. You can claim it in ${remaining} seconds.`;
+}
+
+function noteOwnerPresent(channelId, userId) {
+  cancelOwnerRelease(channelId, userId);
+  clearStoredRelease(channelId);
+}
+
+function ownerReleaseUser(channelId) {
+  const entry = pendingOwnerReleases.get(String(channelId));
+  return entry && !entry.cancelled ? entry.userId : null;
+}
+
+function restoreReservedOwner(channelId, userId) {
+  const row = typeof db.getTempChannel === "function" ? db.getTempChannel(channelId) : null;
+  if (!row || row.owner_id || typeof db.forceOwner !== "function") return false;
+  const entry = pendingOwnerReleases.get(String(channelId));
+  if (!entry || entry.cancelled || !sameId(entry.userId, userId) || entry.expiresAt <= Date.now()) return false;
+  return db.forceOwner(channelId, userId);
+}
+
+function beginOwnerReservation(guild, channelId, userId) {
+  const key = String(channelId);
+  const existing = pendingOwnerReleases.get(key);
+  if (
+    existing &&
+    !existing.cancelled &&
+    sameId(existing.userId, userId) &&
+    existing.expiresAt > Date.now()
+  ) {
+    return existing;
+  }
+  const expiresAt = Date.now() + OWNER_RELEASE_GRACE_MS;
+  storeOwnerRelease(channelId, expiresAt);
+  return scheduleOwnerRelease(
+    channelId,
+    userId,
+    () => withChannelLock(channelId, () => expireOwnerReservation(guild, channelId, userId)),
+    OWNER_RELEASE_GRACE_MS,
+    expiresAt
+  );
+}
+
+function resumeOwnerReservation(guild, channelId, userId, expiresAt) {
+  const existing = pendingOwnerReleases.get(String(channelId));
+  if (existing && !existing.cancelled && sameId(existing.userId, userId)) return existing;
+  const remaining = Number(expiresAt) - Date.now();
+  if (remaining <= 0) return null;
+  return scheduleOwnerRelease(
+    channelId,
+    userId,
+    () => withChannelLock(channelId, () => expireOwnerReservation(guild, channelId, userId)),
+    remaining,
+    expiresAt
+  );
+}
+
+async function expireOwnerReservation(guild, channelId, userId) {
+  const key = String(channelId);
+  const entry = pendingOwnerReleases.get(key);
+  if (entry?.cancelled) return;
+  if (entry && !sameId(entry.userId, userId)) return;
+  const current = typeof db.getTempChannel === "function" ? db.getTempChannel(channelId) : null;
+  if (!current || !sameId(current.owner_id, userId)) {
+    cancelOwnerRelease(channelId, userId);
+    clearStoredRelease(channelId);
+    return;
+  }
+  if (await ownerStillPresent(guild, channelId, userId) || isChannelMember(guild, channelId, userId)) {
+    noteOwnerPresent(channelId, userId);
+    return;
+  }
+  const latest = pendingOwnerReleases.get(key);
+  if (!latest || latest.cancelled || !sameId(latest.userId, userId)) return;
+  if (latest !== entry && entry) return;
+  if (typeof db.clearOwner === "function") db.clearOwner(channelId, userId);
+  clearStoredRelease(channelId);
+  cancelOwnerRelease(channelId, userId);
+}
+
+async function ownerHasNewerTemp(guild, channelId, userId) {
+  if (!guild || typeof db.getTempChannels !== "function") return false;
+  for (const row of db.getTempChannels(guild.id)) {
+    if (!row || sameId(row.channel_id, channelId) || !sameId(row.owner_id, userId)) continue;
+    if (await ownerStillPresent(guild, row.channel_id, userId) || isChannelMember(guild, row.channel_id, userId)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+async function noteOwnerDeparture(guild, channelId, userId) {
+  const current = typeof db.getTempChannel === "function" ? db.getTempChannel(channelId) : null;
+  if (!current || !sameId(current.owner_id, userId)) return false;
+  if (await ownerStillPresent(guild, channelId, userId) || isChannelMember(guild, channelId, userId)) {
+    noteOwnerPresent(channelId, userId);
+    return false;
+  }
+  const fresh = db.getTempChannel(channelId);
+  if (!fresh || !sameId(fresh.owner_id, userId)) return false;
+  if (await ownerHasNewerTemp(guild, channelId, userId)) {
+    cancelOwnerRelease(channelId, userId);
+    if (typeof db.clearOwner === "function") db.clearOwner(channelId, userId);
+    clearStoredRelease(channelId);
+    return false;
+  }
+  if (isChannelMember(guild, channelId, userId)) {
+    noteOwnerPresent(channelId, userId);
+    return false;
+  }
+  beginOwnerReservation(guild, channelId, userId);
+  return true;
+}
+
+async function noteOwnerArrival(guild, channelId, userId) {
+  const row = typeof db.getTempChannel === "function" ? db.getTempChannel(channelId) : null;
+  const reservedUser = ownerReleaseUser(channelId);
+  if (!sameId(row?.owner_id, userId) && !sameId(reservedUser, userId)) return false;
+  if (!await ownerStillPresent(guild, channelId, userId) && !isChannelMember(guild, channelId, userId)) {
+    return false;
+  }
+  restoreReservedOwner(channelId, userId);
+  noteOwnerPresent(channelId, userId);
+  return true;
+}
+
+async function releaseOtherOwnedChannels(guild, ownerId, keepChannelId, alsoChannelId = null) {
+  const ids = new Set();
+  if (guild && typeof db.getTempChannels === "function") {
+    for (const row of db.getTempChannels(guild.id)) {
+      if (row && sameId(row.owner_id, ownerId)) ids.add(String(row.channel_id));
+    }
+  }
+  for (const [channelId, entry] of pendingOwnerReleases) {
+    if (entry && !entry.cancelled && sameId(entry.userId, ownerId)) ids.add(String(channelId));
+  }
+  if (alsoChannelId != null) ids.add(String(alsoChannelId));
+  ids.delete(String(keepChannelId));
+  for (const channelId of ids) {
+    await withChannelLock(channelId, async () => {
+      const row = typeof db.getTempChannel === "function" ? db.getTempChannel(channelId) : null;
+      if (row?.owner_id && !sameId(row.owner_id, ownerId)) return;
+      const pending = pendingOwnerReleases.get(channelId);
+      if (!row?.owner_id && !(pending && sameId(pending.userId, ownerId))) return;
+      if (await ownerStillPresent(guild, channelId, ownerId) || isChannelMember(guild, channelId, ownerId)) {
+        noteOwnerPresent(channelId, ownerId);
+        return;
+      }
+      cancelOwnerRelease(channelId, ownerId);
+      if (row && sameId(row.owner_id, ownerId) && typeof db.clearOwner === "function") {
+        db.clearOwner(channelId, ownerId);
+      }
+      clearStoredRelease(channelId);
+    });
+  }
+}
+
+async function adoptOwnedChannel(guild, channel, ownerId, previousChannelId = null) {
+  if (!channel?.id || ownerId == null) return;
+  if (typeof db.forceOwner === "function") db.forceOwner(channel.id, ownerId);
+  noteOwnerPresent(channel.id, ownerId);
+  if (guild) await releaseOtherOwnedChannels(guild, ownerId, channel.id, previousChannelId);
+}
+
+async function assessClaim(guild, channel, userId) {
+  const current = typeof db.getTempChannel === "function" ? db.getTempChannel(channel?.id) : null;
+  if (!current) return { status: "missing" };
+  if (!isChannelMember(guild, channel.id, userId) && !await ownerStillPresent(guild, channel.id, userId)) {
+    return { status: "not-in-channel" };
+  }
+  if (!isChannelMember(guild, channel.id, userId)) return { status: "not-in-channel" };
+
+  const pending = pendingOwnerReleases.get(String(channel.id));
+  let row = db.getTempChannel(channel.id) || current;
+  if (!row.owner_id && pending && !pending.cancelled) {
+    const reservedUser = pending.userId;
+    if (isChannelMember(guild, channel.id, reservedUser) || await ownerStillPresent(guild, channel.id, reservedUser)) {
+      if (typeof db.forceOwner === "function") db.forceOwner(channel.id, reservedUser);
+      noteOwnerPresent(channel.id, reservedUser);
+      row = db.getTempChannel(channel.id) || { ...row, owner_id: reservedUser };
+    }
+  }
+
+  const ownerId = row.owner_id;
+  if (ownerId && sameId(ownerId, userId)) {
+    if (isChannelMember(guild, channel.id, ownerId) || await ownerStillPresent(guild, channel.id, ownerId)) {
+      noteOwnerPresent(channel.id, ownerId);
+    }
+    return { status: "already-owner" };
+  }
+  if (!ownerId) {
+    const seconds = reservationSeconds(channel.id, row);
+    if (seconds > 0) return { status: "reserved", seconds };
+    return { status: "open" };
+  }
+  if (isChannelMember(guild, channel.id, ownerId) || await ownerStillPresent(guild, channel.id, ownerId)) {
+    noteOwnerPresent(channel.id, ownerId);
+    return { status: "owned" };
+  }
+  if (isChannelMember(guild, channel.id, ownerId)) {
+    noteOwnerPresent(channel.id, ownerId);
+    return { status: "owned" };
+  }
+  const latest = db.getTempChannel(channel.id) || row;
+  const seconds = reservationSeconds(channel.id, latest);
+  if (seconds > 0) return { status: "reserved", seconds };
+  const deadline = reservationDeadline(channel.id, latest);
+  if ((deadline && deadline <= Date.now()) || ownerReleasePending(channel.id)) {
+    if (typeof db.clearOwner === "function") db.clearOwner(channel.id, ownerId);
+    cancelOwnerRelease(channel.id, ownerId);
+    clearStoredRelease(channel.id);
+    const opened = db.getTempChannel(channel.id);
+    if (opened?.owner_id) return { status: "owned" };
+    return { status: "open" };
+  }
+  return { status: "owned" };
 }
 
 function unknownVoiceState(error) {
@@ -867,15 +1115,24 @@ async function reconcileGuild(guild, { tempBatchSize = Infinity, cursor = 0 } = 
             return;
           }
           const fresh = db.getTempChannel(row.channel_id) || row;
-          if (
-            fresh.owner_id &&
-            !ownerReleasePending(fresh.channel_id) &&
-            channelHasOccupant(channel) &&
-            !channelHasOccupant(channel, fresh.owner_id) &&
-            (guild.voiceStates?.cache?.size || 0) > 0 &&
-            !await ownerStillPresent(guild, fresh.channel_id, fresh.owner_id)
-          ) {
-            db.clearOwner(fresh.channel_id, fresh.owner_id);
+          if (fresh.owner_id && (channelHasOccupant(channel, fresh.owner_id) || isChannelMember(guild, channel.id, fresh.owner_id))) {
+            noteOwnerPresent(fresh.channel_id, fresh.owner_id);
+          } else if (fresh.owner_id) {
+            const releaseAt = reservationDeadline(fresh.channel_id, fresh);
+            if (releaseAt > Date.now() || ownerReleasePending(fresh.channel_id)) {
+              if (!ownerReleasePending(fresh.channel_id)) {
+                resumeOwnerReservation(guild, fresh.channel_id, fresh.owner_id, releaseAt);
+              }
+            } else if (
+              channelHasOccupant(channel) &&
+              !channelHasOccupant(channel, fresh.owner_id) &&
+              (guild.voiceStates?.cache?.size || 0) > 0 &&
+              !await ownerStillPresent(guild, fresh.channel_id, fresh.owner_id) &&
+              !isChannelMember(guild, fresh.channel_id, fresh.owner_id)
+            ) {
+              db.clearOwner(fresh.channel_id, fresh.owner_id);
+              clearStoredRelease(fresh.channel_id);
+            }
           }
           if (!channelHasOccupant(channel) && fresh.empty_since === null) {
             db.setEmptySince(fresh.channel_id, Date.now());
@@ -923,6 +1180,13 @@ module.exports = {
   cancelOwnerRelease,
   ownerReleasePending,
   flushOwnerReleases,
+  noteOwnerDeparture,
+  noteOwnerArrival,
+  ownerReleaseUser,
+  adoptOwnedChannel,
+  assessClaim,
+  reservationMessage,
+  reservationSeconds,
   OWNER_RELEASE_GRACE_MS,
   configuredCategoryIds,
   categoryOverflowThreshold,
