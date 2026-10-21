@@ -137,6 +137,11 @@ CREATE TABLE IF NOT EXISTS breakthru_roles (
   guild_id TEXT PRIMARY KEY,
   role_id TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS pic_roles (
+  guild_id TEXT PRIMARY KEY,
+  role_id TEXT NOT NULL
+);
 `);
 
 function key(value) {
@@ -251,7 +256,12 @@ const statements = {
     INSERT INTO breakthru_roles(guild_id, role_id) VALUES(?,?)
     ON CONFLICT(guild_id) DO UPDATE SET role_id=excluded.role_id
   `),
-  listBreakthruRoles: connection.prepare("SELECT guild_id, role_id FROM breakthru_roles")
+  listBreakthruRoles: connection.prepare("SELECT guild_id, role_id FROM breakthru_roles"),
+  getPicRole: connection.prepare("SELECT role_id FROM pic_roles WHERE guild_id=?"),
+  setPicRole: connection.prepare(`
+    INSERT INTO pic_roles(guild_id, role_id) VALUES(?,?)
+    ON CONFLICT(guild_id) DO UPDATE SET role_id=excluded.role_id
+  `)
 };
 
 function saveGuard(guildId, userId, patch) {
@@ -504,6 +514,12 @@ module.exports = {
   },
   listBreakthruRoles() {
     return statements.listBreakthruRoles.all();
+  },
+  getPicRole(guildId) {
+    return statements.getPicRole.get(key(guildId))?.role_id || null;
+  },
+  setPicRole(guildId, roleId) {
+    statements.setPicRole.run(key(guildId), key(roleId));
   }
 };
 

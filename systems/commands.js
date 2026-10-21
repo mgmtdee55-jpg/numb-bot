@@ -676,6 +676,10 @@ async function handleCommand(message, args, prefix) {
     await handleInfo(message, name, args);
     return true;
   }
+  if (name === "setpicrole" || name === "pic") {
+    await require("../pic-perms").handleCommand(message, name, args);
+    return true;
+  }
   if (await channels.handleCommand(message, name, args) !== false) return true;
   if (name === "lockdown") {
     await voice.lockdown(message, true);
