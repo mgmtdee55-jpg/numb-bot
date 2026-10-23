@@ -239,7 +239,11 @@ async function handleInteraction(interaction) {
   return panel.handleInteraction(interaction);
 }
 
+const boundClients = new WeakSet();
+
 function bind(client) {
+  if (!client || boundClients.has(client)) return;
+  boundClients.add(client);
   client.on("guildAuditLogEntryCreate", (entry, guild) => {
     engine.handleAudit(guild, entry, true).catch((error) => console.error("[antinuke]", error?.message || error));
   });
@@ -252,7 +256,7 @@ function bind(client) {
   client.on("guildUpdate", (before, after) => {
     engine.handleGuildUpdate(before, after, true).catch((error) => console.error("[antinuke]", error?.message || error));
   });
-  if (process.env.NODE_TEST_CONTEXT === "1") return;
+  if (process.env.NODE_TEST_CONTEXT || process.env.npm_lifecycle_event === "test") return;
   const timer = setInterval(() => {
     for (const guild of client.guilds.cache.values()) {
       engine.tickSnapshots(guild).catch((error) => console.error("[antinuke snapshot]", error?.message || error));

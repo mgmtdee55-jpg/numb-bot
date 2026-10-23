@@ -2,7 +2,6 @@ const {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  EmbedBuilder,
   PermissionFlagsBits,
   Routes,
   StringSelectMenuBuilder
@@ -72,16 +71,11 @@ function inviteCode(guild, code) {
   return String(code || guild?.vanityURLCode || "yrs").replace(/^\/+/, "") || "yrs";
 }
 
-function dmText(category, guild, code) {
-  const name = guild?.name || "yrs";
-  const link = `discord.gg/${inviteCode(guild, code)}`;
-  if (category === "tag") {
-    return `you've been kicked from ${name} due to not having our server tag on , join back at ${link} if your gonna put it on`;
-  }
-  if (category === "vanity") {
-    return `you've been kicked from ${name} due to not having our guild vanity on , join back at ${link} if your gonna put it on`;
-  }
-  return `you've been kicked from ${name} , join back at ${link}`;
+function dmText(category, guild) {
+  const name = guild?.name || "the server";
+  if (category === "tag") return `Kicked from ${name} for not having the server tag on. No direct message is sent.`;
+  if (category === "vanity") return `Kicked from ${name} for not having the guild vanity on. No direct message is sent.`;
+  return `Kicked from ${name}. No direct message is sent.`;
 }
 
 function repsServerTag(user, guildId) {
@@ -332,46 +326,9 @@ async function acknowledge(interaction) {
 function progressText(label, counts, note) {
   return [
     `**${label}**`,
-    `Kicked **${counts.kicked}** · Could not kick **${counts.failed}** · Left **${counts.left}** · DMs closed **${counts.dms}** · Remaining **${counts.leftCount}**`,
+    `Kicked **${counts.kicked}** · Could not kick **${counts.failed}** · Left **${counts.left}** · Remaining **${counts.leftCount}**`,
     note
   ].join("\n");
-}
-
-async function deliverDm(guild, userId, description) {
-  const text = description.slice(0, 4000);
-  const body = { embeds: [{ color: 0x2b2d31, description: text }] };
-  const cached = guild.client?.users?.cache?.get?.(userId);
-  if (cached?.send) {
-    await cached.send({ embeds: [new EmbedBuilder().setColor(0x2b2d31).setDescription(text)] });
-    return;
-  }
-  const rest = guild.client?.rest;
-  if (rest?.post && Routes?.userChannels && Routes?.channelMessages) {
-    const channel = await rest.post(Routes.userChannels(), { body: { recipient_id: userId } });
-    if (!channel?.id) throw new Error("dm unavailable");
-    await rest.post(Routes.channelMessages(channel.id), { body });
-    return;
-  }
-  const user = await guild.client?.users?.fetch?.(userId);
-  if (!user?.send) throw Object.assign(new Error("dm closed"), { code: 50007 });
-  await user.send({ embeds: [new EmbedBuilder().setColor(0x2b2d31).setDescription(text)] });
-}
-
-async function sendDm(guild, userId, description) {
-  try {
-    await deliverDm(guild, userId, description);
-    return "sent";
-  } catch (error) {
-    const wait = retryMs(error);
-    if (!wait) return "closed";
-    await pause(wait);
-    try {
-      await deliverDm(guild, userId, description);
-      return "sent";
-    } catch {
-      return "closed";
-    }
-  }
 }
 
 async function kickOne(guild, member, reason, job) {
@@ -408,14 +365,14 @@ async function runKick(interaction, category, job) {
   const guild = interaction.guild;
   const label = CATEGORIES[category];
   const message = interaction.message;
-  const counts = { kicked: 0, failed: 0, left: 0, dms: 0, leftCount: 0 };
+  const counts = { kicked: 0, failed: 0, left: 0, leftCount: 0 };
   const show = async (note, components) => {
     const payload = {
       embeds: [embed(note === "done" ? (job.cancelled ? "Mass Kick Aborted" : "Mass Kick Finished") : "Mass Kick", note === "done"
         ? [
           job.cancelled ? "Stopped early." : "Finished.",
           `**${label}**`,
-          `Kicked **${counts.kicked}**. Could not kick **${counts.failed}**. Already left **${counts.left}**. DMs closed **${counts.dms}**.`
+          `Kicked **${counts.kicked}**. Could not kick **${counts.failed}**. Already left **${counts.left}**. Nobody was sent a direct message.`
         ].join("\n")
         : note, guild)],
       components: components || []
@@ -461,14 +418,11 @@ async function runKick(interaction, category, job) {
   }
 
   const reason = `Mass kick (${label}) by the server owner`;
-  const notice = dmText(category, guild, code);
   let sinceBurst = 0;
   for (const member of targets) {
     if (job.cancelled) break;
     counts.leftCount = Math.max(0, counts.leftCount - 1);
     if (!canKick(guild, member)) continue;
-    const dm = await sendDm(guild, member.id, notice);
-    if (dm !== "sent") counts.dms += 1;
     if (job.cancelled) break;
     const result = await kickOne(guild, member, reason, job);
     if (result === "abort") {
@@ -522,9 +476,7 @@ async function preview(interaction, category) {
     `**${targets.length}** member(s) will be kicked.`,
     "Bots, you, and anyone above my highest role are skipped.",
     "About one member a second, with an extra pause every 5 kicks. Rate limits are waited out.",
-    "",
-    "Each person is DMed:",
-    dmText(category, guild, code)
+    "Nobody is sent a direct message or an invite."
   ];
   if (category === "vanity") {
     lines.splice(3, 0, "Offline members count as not repping, because their status is not visible.");

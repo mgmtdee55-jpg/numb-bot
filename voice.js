@@ -13,6 +13,8 @@ const { logThrottledError } = require("./log-throttle");
 const breakthru = require("./breakthru");
 
 const tempInterfaceTasks = new Map();
+const interfaceSentAt = new Map();
+const INTERFACE_RESEND_GAP_MS = 10000;
 const serverInterfaceTasks = new Map();
 const interfaceEmojiStrings = new Map();
 const pendingCategoryMembers = new Map();
@@ -725,8 +727,18 @@ async function ensureTempInterface(channel, ownerId) {
       if (existingMessage.id !== savedMessageId) db.updateTempInterface(channel.id, existingMessage.id);
       return existingMessage;
     }
+    const sentAt = interfaceSentAt.get(String(channel.id)) || 0;
+    if (Date.now() - sentAt < INTERFACE_RESEND_GAP_MS) {
+      logThrottledError(
+        `temp-interface-repeat:${channel.id}`,
+        `[temp interface] ${channel.id}`,
+        new Error("Skipped a repeated interface message")
+      );
+      return null;
+    }
     const panel = await buildVoiceChannelInterfacePayload(channel.guild, panelOwner);
     const message = await channel.send(panel);
+    interfaceSentAt.set(String(channel.id), Date.now());
     db.updateTempInterface(channel.id, message.id);
     return message;
   })();

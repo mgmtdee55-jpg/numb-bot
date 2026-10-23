@@ -313,7 +313,7 @@ function administrators(guild) {
     seen.add(member.id);
     people.push(member);
   }
-  return people;
+  return people.slice(0, 20);
 }
 
 async function deliverDM(member, payload) {
@@ -321,7 +321,9 @@ async function deliverDM(member, payload) {
     ? member.send.bind(member)
     : (typeof member.user?.send === "function" ? member.user.send.bind(member.user) : null);
   if (!send) return;
-  await send(payload).catch(() => null);
+  await send(payload).catch((error) => {
+    console.error("[role strip dm]", error?.code || error?.message || error);
+  });
 }
 
 async function notifyStripAdmins(guild, role, actorId, removed, grants, keptIds, failed, admins) {
@@ -333,12 +335,17 @@ async function notifyStripAdmins(guild, role, actorId, removed, grants, keptIds,
     giverLine(grants.get(member.id))
   ].join("\n"));
   const blocks = packBlocks(header, entries);
+  let sent = 0;
   for (const admin of admins) {
     for (const block of blocks) {
+      if (sent > 0 && process.env.npm_lifecycle_event !== "test" && !process.env.NODE_TEST_CONTEXT) {
+        await require("./util").sleep(1100);
+      }
       await deliverDM(admin, {
         embeds: [embed("Role Stripped", block, { guild })],
         allowedMentions: { parse: [] }
       });
+      sent += 1;
     }
   }
 }

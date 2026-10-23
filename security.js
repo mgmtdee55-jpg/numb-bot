@@ -6,6 +6,7 @@ const {
   Routes
 } = require("discord.js");
 const { connection } = require("./db");
+const { logThrottledError } = require("./log-throttle");
 const store = require("./systems/store");
 const access = require("./systems/access");
 const { ACCENT } = require("./vouch/constants");
@@ -283,13 +284,26 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function retryWaitMs(error) {
+  const raw = Number(error?.rawError?.retry_after ?? error?.data?.retry_after);
+  if (raw > 0) return Math.min(15000, Math.ceil(raw * 1000));
+  const given = Number(error?.retryAfter);
+  if (given > 0) return Math.min(15000, Math.ceil(given < 100 ? given * 1000 : given));
+  if (Number(error?.status) === 429 || Number(error?.code) === 429) return 1000;
+  return 0;
+}
+
+function rateLimited(error) {
+  return Number(error?.status) === 429 || Number(error?.code) === 429;
+}
+
 async function once(run) {
   try {
     return await run();
   } catch (error) {
-    const wait = Number(error?.retryAfter || error?.rawError?.retry_after || error?.data?.retry_after || 0);
-    if ((error?.status === 429 || error?.code === 429) && wait > 0 && wait <= 3) {
-      await sleep(wait * 1000);
+    const wait = retryWaitMs(error);
+    if (rateLimited(error) && wait > 0) {
+      await sleep(wait);
       return run();
     }
     throw error;
@@ -313,7 +327,20 @@ function overwrites(guild) {
   return rows;
 }
 
+const channelCreates = new Map();
+
 async function ensureChannel(guild, kind) {
+  const key = `${guild.id}:${kind}`;
+  const pending = channelCreates.get(key);
+  if (pending) return pending;
+  const task = openLogChannel(guild, kind).finally(() => {
+    if (channelCreates.get(key) === task) channelCreates.delete(key);
+  });
+  channelCreates.set(key, task);
+  return task;
+}
+
+async function openLogChannel(guild, kind) {
   const row = load(guild.id);
   const field = kind === "watch" ? "watch_channel_id" : "events_channel_id";
   const name = kind === "watch" ? "watchlist" : "security-events";
@@ -343,18 +370,24 @@ async function drain(channel, queue) {
   queue.running = true;
   while (queue.items.length) {
     const payload = queue.items.shift();
-    try {
-      await channel.send(payload);
-    } catch (error) {
-      const wait = Number(error?.retryAfter || error?.data?.retry_after || 0);
-      if ((error?.status === 429 || error?.code === 429) && wait > 0 && wait <= 3) {
-        queue.items.unshift(payload);
-        await sleep(wait * 1000);
-        continue;
+    let sent = false;
+    let lastError = null;
+    for (let attempt = 1; attempt <= 2 && !sent; attempt += 1) {
+      try {
+        await channel.send(payload);
+        sent = true;
+      } catch (error) {
+        lastError = error;
+        const wait = retryWaitMs(error);
+        if (rateLimited(error) && wait > 0 && attempt === 1) {
+          await sleep(wait);
+          continue;
+        }
+        break;
       }
-      console.error("[security log]", error?.message || error);
     }
-    if (queue.items.length) await sleep(250);
+    if (!sent) logThrottledError(`security-log:${channel.id}`, "[security log]", lastError);
+    if (queue.items.length && process.env.npm_lifecycle_event !== "test") await sleep(250);
   }
   queue.running = false;
 }
@@ -628,7 +661,11 @@ async function handleGuildUpdate(before, after) {
   logEvent(after, "events", "Vanity Protection", `The vanity changed to \`${after.vanityURLCode || "none"}\`. ${restored ? `Restored \`${row.vanity_code || "none"}\`.` : "The vanity could not be restored yet."}`);
 }
 
+const boundClients = new WeakSet();
+
 function bind(client) {
+  if (!client || boundClients.has(client)) return;
+  boundClients.add(client);
   client.on("guildAuditLogEntryCreate", (entry, guild) => {
     handleAudit(guild, entry).catch((error) => console.error("[security]", error));
   });
@@ -832,6 +869,7 @@ module.exports = {
   handleAudit,
   handleMemberAdd,
   handleGuildUpdate,
+  ensureChannel,
   stamp,
   load
 };

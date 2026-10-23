@@ -49,7 +49,8 @@ const client = new Client({
     GatewayIntentBits.GuildPresences,
     GatewayIntentBits.GuildInvites
   ],
-  partials: [Partials.Channel, Partials.Message]
+  partials: [Partials.Channel, Partials.Message],
+  allowedMentions: { parse: ["users", "roles"], repliedUser: true }
 });
 
 systems.bindClient(client);

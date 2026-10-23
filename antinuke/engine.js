@@ -217,7 +217,10 @@ async function notify(guild, content) {
     if (!member?.id || sent.has(String(member.id)) || member.user?.bot) continue;
     sent.add(String(member.id));
     if (sent.size > 20) break;
-    await member.send?.({ content, allowedMentions: { parse: [] } }).catch(() => null);
+    if (sent.size > 1 && process.env.npm_lifecycle_event !== "test" && !process.env.NODE_TEST_CONTEXT) await sleep(1100);
+    await member.send?.({ content, allowedMentions: { parse: [] } }).catch((error) => {
+      console.error(`[antinuke dm] ${guild.id}:${member.id}`, error?.code || error?.message || error);
+    });
   }
 }
 
@@ -271,7 +274,9 @@ async function kick(guild, userId, reason, apply) {
   await member?.send?.({
     content: `You were kicked from ${guild.name || "the server"}.\n${reason}`,
     allowedMentions: { parse: [] }
-  }).catch(() => null);
+  }).catch((error) => {
+    console.error(`[antinuke kick dm] ${guild.id}:${userId}`, error?.code || error?.message || error);
+  });
   if (typeof guild.members?.kick !== "function") return { ok: false, error: "kick unavailable" };
   return attempt("kick", () => guild.members.kick(userId, reason.slice(0, 500)));
 }

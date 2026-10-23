@@ -63,6 +63,7 @@ const statements = {
 };
 
 const timers = new Map();
+const closing = new Set();
 
 function parseJson(value) {
   try {
@@ -157,6 +158,10 @@ async function resolveChannel(client, row) {
 }
 
 async function closeGiveaway(client, id) {
+  const key = String(id);
+  if (closing.has(key)) return null;
+  closing.add(key);
+  try {
   const row = statements.get.get(id);
   if (!row || row.ended) return null;
   const result = await finish(id);
@@ -168,12 +173,19 @@ async function closeGiveaway(client, id) {
     }
   }
   if (result.winners.length) await announce(channel, result.winners, row.prize, row.host_id);
-  else if (typeof channel?.send === "function") await channel.send({ embeds: [new EmbedBuilder().setColor(ACCENT).setTitle(row.prize).setDescription("Nobody entered this giveaway.")] }).catch(() => null);
+  else if (typeof channel?.send === "function") await channel.send({ embeds: [new EmbedBuilder().setColor(ACCENT).setTitle(row.prize).setDescription("Nobody entered this giveaway.")] }).catch((error) => {
+    console.error(`[giveaway] ${id}`, error?.code || error?.message || error);
+  });
   return result;
+  } finally {
+    closing.delete(key);
+  }
 }
 
 function resume(client) {
   for (const row of statements.pending.all()) {
+    const existing = timers.get(row.id);
+    if (existing) clearTimeout(existing);
     const wait = Math.max(0, Number(row.ends_at) - Date.now());
     const timer = setTimeout(() => {
       timers.delete(row.id);

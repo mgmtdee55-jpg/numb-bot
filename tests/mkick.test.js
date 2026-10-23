@@ -21,8 +21,6 @@ const HIDDEN = "100000000000000005";
 const OTHER = "100000000000000006";
 const HIGH = "100000000000000007";
 const GUILD = "200000000000000001";
-const TAG_DM = "you've been kicked from yrs due to not having our server tag on , join back at discord.gg/yrs if your gonna put it on";
-
 function textOf(payload) {
   return String(payload?.embeds?.[0]?.data?.description || "");
 }
@@ -163,7 +161,7 @@ test("only the server owner can open -mkick", async () => {
   assert.equal(menu.custom_id, `spanter:mkick:pick:${OWNER}`);
 });
 
-test("server tag category kicks only people not repping and dms the exact notice", async () => {
+test("server tag category kicks only people not repping and does not dm them", async () => {
   const rows = [
     tagRow(OWNER, GUILD),
     row(BOT, { bot: true, tag: null }),
@@ -179,7 +177,8 @@ test("server tag category kicks only people not repping and dms the exact notice
   assert.equal(await mkick.handleInteraction(pick), true);
   const preview = view.message.edits.at(-1);
   assert.match(textOf(preview), /\*\*3\*\*/);
-  assert.match(textOf(preview), /you've been kicked from yrs due to not having our server tag on/);
+  assert.match(textOf(preview), /Nobody is sent a direct message or an invite/);
+  assert.doesNotMatch(textOf(preview), /discord\.gg/);
   const startId = customId(preview.components[0].components[0]);
   assert.equal(startId, `spanter:mkick:start:${OWNER}:tag`);
 
@@ -187,10 +186,9 @@ test("server tag category kicks only people not repping and dms the exact notice
   assert.equal(await mkick.handleInteraction(start), true);
   assert.deepEqual(kicks.map((entry) => entry.id).sort(), [HIDDEN, OTHER, PLAIN].sort());
   assert.match(kicks[0].reason, /Not repping server tag/);
-  const notices = dms.filter((entry) => entry.description);
-  assert.equal(notices.length, 3);
-  assert.deepEqual(notices.map((entry) => entry.description), [TAG_DM, TAG_DM, TAG_DM]);
+  assert.equal(dms.length, 0);
   assert.match(textOf(view.message.edits.at(-1)), /Mass Kick Finished/);
+  assert.match(textOf(view.message.edits.at(-1)), /Nobody was sent a direct message/);
   assert.match(textOf(view.message.edits.at(-1)), /Kicked \*\*3\*\*/);
 });
 

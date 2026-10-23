@@ -121,7 +121,9 @@ async function sendDM(user, content) {
   if (!user) return;
   const send = user.send?.bind(user) || user.user?.send?.bind(user.user);
   if (!send) return;
-  await send({ content, allowedMentions: { parse: [] } }).catch(() => null);
+  await send({ content, allowedMentions: { parse: [] } }).catch((error) => {
+    console.error("[verified seller dm]", error?.code || error?.message || error);
+  });
 }
 
 function remember(guildId, userId, addedBy) {
@@ -327,6 +329,9 @@ async function notifyAdmins(guild, skipId, content) {
     if (!member?.id || seen.has(String(member.id)) || String(member.id) === String(skipId) || member.user?.bot) continue;
     seen.add(String(member.id));
     if (sent >= 20) break;
+    if (sent > 0 && process.env.npm_lifecycle_event !== "test" && !process.env.NODE_TEST_CONTEXT) {
+      await require("./vouch/util").sleep(1100);
+    }
     await sendDM(member, content);
     sent += 1;
   }
@@ -463,7 +468,11 @@ async function handleAudit(guild, entry) {
   await punish(guild, entry, configured, "add");
 }
 
+const boundClients = new WeakSet();
+
 function bind(client) {
+  if (!client || boundClients.has(client)) return;
+  boundClients.add(client);
   client.on("guildAuditLogEntryCreate", (entry, guild) => {
     handleAudit(guild, entry).catch((error) => console.error("[verified seller]", error));
   });

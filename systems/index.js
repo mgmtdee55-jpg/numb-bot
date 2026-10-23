@@ -9,7 +9,11 @@ function stamp() {
   return logs.whenLine(Date.now());
 }
 
+const boundClients = new WeakSet();
+
 function bindClient(client) {
+  if (!client || boundClients.has(client)) return;
+  boundClients.add(client);
   security.bind(client);
   sellers.bind(client);
   require("../antinuke").bind(client);

@@ -3,6 +3,7 @@ const store = require("./store");
 const access = require("./access");
 const vouchStore = require("../vouch/store");
 const { embed, reply } = require("../vouch/ui");
+const { logThrottledError } = require("../log-throttle");
 
 const CATEGORY_NAME = "numb bot";
 const LOG_CHANNELS = [
@@ -25,6 +26,51 @@ const CATEGORY_HELP = {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+const logChains = new Map();
+
+function retryWaitMs(error) {
+  const raw = Number(error?.rawError?.retry_after ?? error?.data?.retry_after);
+  if (raw > 0) return Math.min(15000, Math.ceil(raw * 1000));
+  const given = Number(error?.retryAfter);
+  if (given > 0) return Math.min(15000, Math.ceil(given < 100 ? given * 1000 : given));
+  return Number(error?.status) === 429 || Number(error?.code) === 429 ? 1000 : 0;
+}
+
+function transientSendError(error) {
+  const status = Number(error?.status);
+  if (status === 429 || status >= 500) return true;
+  const code = String(error?.code || "");
+  return code === "ECONNRESET" || code === "ETIMEDOUT" || code === "EAI_AGAIN" || code === "UND_ERR_CONNECT_TIMEOUT";
+}
+
+async function deliverLog(channel, payload) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    try {
+      await channel.send(payload);
+      return true;
+    } catch (error) {
+      lastError = error;
+      const wait = retryWaitMs(error);
+      if (attempt === 1 && transientSendError(error)) {
+        await sleep(wait || 500);
+        continue;
+      }
+      break;
+    }
+  }
+  logThrottledError(`event-log:${channel.id}`, `[event log] ${channel.id}`, lastError);
+  return false;
+}
+
+function enqueueLog(channel, payload) {
+  const key = String(channel.id);
+  const previous = logChains.get(key) || Promise.resolve();
+  const run = previous.catch(() => false).then(() => deliverLog(channel, payload));
+  logChains.set(key, run);
+  return run;
 }
 
 function whenLine(ms) {
@@ -182,8 +228,7 @@ async function sendLog(guild, category, description, title, options = {}) {
     allowedMentions: pingRoleId ? { parse: [], roles: [pingRoleId] } : { parse: [] }
   };
   if (pingRoleId) payload.content = `<@&${pingRoleId}>`;
-  await channel.send(payload);
-  return true;
+  return enqueueLog(channel, payload);
 }
 
 function remember(guild, channel) {
