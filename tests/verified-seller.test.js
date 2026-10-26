@@ -343,7 +343,7 @@ test("newcommands lists the latest commands in a few words", async () => {
   const shown = await run(guild, member, "-newcommands");
   const page = shown.replies[0].embeds[0].data;
   assert.equal(page.title, "New Commands");
-  for (const bit of ["verifiedseller add", "addgiver", "securityconfig", "`-dpa`", "`-vp`", "watchuser", "`-u @user`", "proof", "auditlog", "unprotect"]) {
+  for (const bit of ["Join to create", "verifiedseller add", "addgiver", "securityconfig", "`-dpa`", "`-vp`", "watchuser", "`-u @user`", "proof", "auditlog", "unprotect"]) {
     assert.match(page.description, new RegExp(bit.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
 });

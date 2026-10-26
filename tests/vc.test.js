@@ -198,8 +198,12 @@ function makeMember(guild, userId, options = {}) {
         this.channel?.members?.set(userId, member);
       },
       async disconnect() {
+        const previousChannel = this.channel;
+        previousChannel?.members?.delete?.(userId);
         this.channel = null;
         this.channelId = null;
+        guild.voiceStates.cache.delete(userId);
+        guild.voiceStates.cache.delete(String(userId));
       }
     }
   };
@@ -2373,6 +2377,60 @@ test("a fetched voice state keeps a join going when the cache says they left", a
   );
 
   assert.equal(member.voice.channelId, "temp-fetched-state");
+});
+
+test("a stale voice-state cache cannot leave someone sitting in join-to-create", async () => {
+  const guild = makeGuild("j2c-stale-cache-sit-guild");
+  const member = makeMember(guild, "474747474747474747", { channelId: "j2c" });
+  guild.voiceStates.cache.set(member.id, { id: member.id, channelId: "old-call", member });
+  const handler = createVoiceStateHandler({
+    db: {
+      getConfig: () => ({ j2c_channel_id: "j2c", category_id: "category" }),
+      getTempChannel: () => null
+    },
+    createTempChannel: async () => ({ id: "temp-stale-cache-sit" }),
+    renderVoiceChannelInterface: async () => {},
+    cleanupEmptyTempChannels: async () => {}
+  });
+
+  await handler(
+    { channelId: "old-call" },
+    { guild, id: member.id, member, channelId: "j2c" }
+  );
+
+  assert.equal(member.voice.channelId, "temp-stale-cache-sit");
+});
+
+test("failed join-to-create permission checks disconnect idle sitters instead of leaving them in the lobby", async () => {
+  const guild = makeGuild("j2c-evict-idle-guild");
+  const member = makeMember(guild, "484848484848484848");
+  const lobby = makeVoiceChannel(guild, "j2c", [member]);
+  guild.voiceStates.cache.set(member.id, { id: member.id, channelId: lobby.id, member });
+  const clock = manualClock();
+  const cleaned = [];
+  const handler = createVoiceStateHandler({
+    db: {
+      getConfig: () => ({ j2c_channel_id: lobby.id, category_id: "category" }),
+      getTempChannel: () => null
+    },
+    pace: clock.pace,
+    createTempChannel: async () => {
+      throw Object.assign(new Error("Missing Permissions"), { code: 50013, status: 403 });
+    },
+    renderVoiceChannelInterface: async () => {},
+    cleanupTempChannel: async (_guild, channelId) => {
+      cleaned.push(String(channelId));
+    }
+  });
+
+  await handler(
+    { channelId: null },
+    { guild, id: member.id, member, channelId: lobby.id }
+  );
+
+  assert.equal(member.voice.channelId, null);
+  assert.equal(lobby.members.has(member.id), false);
+  assert.deepEqual(cleaned, []);
 });
 
 test("a hung channel create cannot leave the next person sitting in join-to-create", async () => {
