@@ -490,6 +490,9 @@ function newCommandsMessage(prefix = "-", member = null) {
   const lines = [
     "What was just added.",
     "",
+    "**Join to create**",
+    "Sitting in the trigger no longer skips a temp VC. Create-and-move keeps going while they are still listed there. After two missing-permission or four guild-full failures, they are disconnected.",
+    "",
     "**Voice pools**",
     `\`${p}poolsetup\` — standby voice channels`,
     `\`${p}poolstatus\` — empty, claimed, and refill`,
